@@ -10,16 +10,15 @@ import {
 } from "../lib/refreshPolicy.js";
 import { scrapePromises } from "../lib/scrapePromises.js";
 import { getSupabaseAdmin } from "../lib/supabaseAdmin.js";
+import { withTimeout } from "../lib/withTimeout.js";
 
 const DEFAULT_TIME_BUDGET_MS = 50_000;
 const MAX_TIME_BUDGET_MS = 295_000;
+const DEFAULT_MEMBER_TIMEOUT_MS = 90_000;
+const MAX_MEMBER_TIMEOUT_MS = 280_000;
 const MEMBER_START_RESERVE_MS = 15_000;
 const MAX_REFRESH_CONCURRENCY = 4;
 const MAX_MEMBER_LIMIT = 13;
-
-export const config = {
-  maxDuration: 300,
-};
 
 // Daily cron job that will visit all 13 congress people's websites, scrape their promises, call Congress.gov
     // API for spon and cospon legislation, run the Gemini analysis, and update in Supabase
@@ -220,8 +219,13 @@ async function refreshMember(member, context) {
   let scrapeResult = { promises: [], source: null, method: null, errors: [] };
   let scrapeException = null;
   try {
-    scrapeResult = await scrapePromises(member);
+    scrapeResult = await withTimeout(
+      scrapePromises(member),
+      context.memberTimeoutMs,
+      `Scraping ${member.name}`,
+    );
   } catch (error) {
+    // A timeout does not cancel the Browserbase session; Browserbase ends it on its own session timeout.
     scrapeException = getErrorMessage(error);
     memberErrors.push(scrapeException);
   }
@@ -405,6 +409,7 @@ export default async function handler(request, response) {
   }
 
   let timeBudgetMs;
+  let memberTimeoutMs;
   let refreshConcurrency;
   let promiseReplacementThreshold;
   let memberLimit;
@@ -414,6 +419,12 @@ export default async function handler(request, response) {
       DEFAULT_TIME_BUDGET_MS,
       "REFRESH_TIME_BUDGET_MS",
       MAX_TIME_BUDGET_MS,
+    );
+    memberTimeoutMs = getPositiveIntegerSetting(
+      process.env.REFRESH_MEMBER_TIMEOUT_MS,
+      DEFAULT_MEMBER_TIMEOUT_MS,
+      "REFRESH_MEMBER_TIMEOUT_MS",
+      MAX_MEMBER_TIMEOUT_MS,
     );
     refreshConcurrency = getPositiveIntegerSetting(
       process.env.REFRESH_CONCURRENCY,
@@ -506,6 +517,7 @@ export default async function handler(request, response) {
     congress,
     congressError,
     promiseReplacementThreshold,
+    memberTimeoutMs,
   };
   const memberResults = new Array(members.length);
   let nextMemberIndex = 0;

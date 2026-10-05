@@ -12,9 +12,6 @@ dist
 dist-ssr
 *.local
 
-# testing
-**/test/**
-
 # Editor directories and files
 .vscode/**
 **/.agents/**

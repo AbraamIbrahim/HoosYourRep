@@ -1,9 +1,10 @@
 // Test the scraper on a few members. Prints results; writes NOTHING to Supabase.
 //
 // From VA-Rep-Tracker/:
-//   node --env-file=.env.local scripts/testScrape.js                 (first 3 members with URLs)
-//   node --env-file=.env.local scripts/testScrape.js W000804 S000185 (specific bioguide IDs)
+//   node --env-file=.env.local scripts/test-scrapePromises.js                 (first 3 members with URLs)
+//   node --env-file=.env.local scripts/test-scrapePromises.js W000804 S000185 (specific bioguide IDs)
 
+import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
 import { scrapePromises } from "../lib/scrapePromises.js";
 
@@ -33,7 +34,7 @@ else query = query.limit(3);
 const { data: members, error } = await query;
 if (error) { console.error(error.message); process.exit(1); }
 if (!members.length) {
-  console.error("No members with URLs found. Add URLs to data/campaignUrls.jsonc and re-run seed.js.");
+  console.error("No members with URLs found. Add URLs to data/urls.jsonc and re-run seed.js.");
   process.exit(1);
 }
 

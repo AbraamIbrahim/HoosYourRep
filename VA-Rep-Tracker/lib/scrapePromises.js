@@ -3,7 +3,7 @@
 //   2. Stagehand browser session (renders JS, can follow the "issues" link) - only if (1) finds nothing
 // Lives in lib/ (NOT api/) so Vercel doesn't expose it as a public endpoint.
 //
-// Needs env: BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID, GEMINI_API_KEY
+// Needs env: BROWSERBASE_API_KEY, GEMINI_API_KEY
 
 import { createBrowserbaseClient } from "./browserBaseClient.js";
 import process from "node:process";

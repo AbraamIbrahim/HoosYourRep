@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": { "api/refresh.js": { "maxDuration": 300 } },
+  "crons": [{ "path": "/api/refresh", "schedule": "0 5 * * *" }],
+  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
+}
