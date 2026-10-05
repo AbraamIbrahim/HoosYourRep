@@ -1,0 +1,134 @@
+{
+  // Virginia member roster and Campaign + Ballotpedia URLs, keyed by bioguideId.
+  // "campaign" = the member's CAMPAIGN site, not their house.gov page.
+  // "ballotpedia" = their Ballotpedia profile page.
+
+  // Robert Wittman (VA-01, Republican)
+  "W000804": {
+    "name": "Robert Wittman",
+    "party": "Republican",
+    "chamber": "house",
+    "district": 1,
+    "campaign": "https://robwittman.com/",
+    "ballotpedia": "https://ballotpedia.org/Rob_Wittman"
+  },
+
+  // Jennifer Kiggans (VA-02, Republican)
+  "K000399": {
+    "name": "Jennifer Kiggans",
+    "party": "Republican",
+    "chamber": "house",
+    "district": 2,
+    "campaign": "https://jenforcongress.com/",
+    "ballotpedia": "https://ballotpedia.org/Jennifer_Kiggans"
+  },
+
+  // Robert Scott (VA-03, Democrat)
+  "S000185": {
+    "name": "Robert Scott",
+    "party": "Democrat",
+    "chamber": "house",
+    "district": 3,
+    "campaign": "https://www.bobbyscottforcongress.com/",
+    "ballotpedia": "https://ballotpedia.org/Bobby_Scott_(Virginia)"
+  },
+
+  // Jennifer McClellan (VA-04, Democrat)
+  "M001227": {
+    "name": "Jennifer McClellan",
+    "party": "Democrat",
+    "chamber": "house",
+    "district": 4,
+    "campaign": "https://jennifermcclellan.com/",
+    "ballotpedia": "https://ballotpedia.org/Jennifer_McClellan"
+  },
+
+  // John J. McGuire (VA-05, Republican)
+  "M001239": {
+    "name": "John J. McGuire",
+    "party": "Republican",
+    "chamber": "house",
+    "district": 5,
+    "campaign": "https://www.mcguireva.com/",
+    "ballotpedia": "https://ballotpedia.org/John_McGuire"
+  },
+
+  // Ben Cline (VA-06, Republican)
+  "C001118": {
+    "name": "Ben Cline",
+    "party": "Republican",
+    "chamber": "house",
+    "district": 6,
+    "campaign": "https://bencline.com/",
+    "ballotpedia": "https://ballotpedia.org/Ben_Cline"
+  },
+
+  // Eugene Vindman (VA-07, Democrat)
+  "V000138": {
+    "name": "Eugene Vindman",
+    "party": "Democrat",
+    "chamber": "house",
+    "district": 7,
+    "campaign": "https://vindmanforcongress.com/",
+    "ballotpedia": "https://ballotpedia.org/Eugene_Vindman"
+  },
+
+  // Donald Beyer (VA-08, Democrat)
+  "B001292": {
+    "name": "Donald Beyer",
+    "party": "Democrat",
+    "chamber": "house",
+    "district": 8,
+    "campaign": "https://www.friendsofdonbeyer.com/",
+    "ballotpedia": "https://ballotpedia.org/Don_Beyer"
+  },
+
+  // Morgan Griffith (VA-09, Republican)
+  "G000568": {
+    "name": "Morgan Griffith",
+    "party": "Republican",
+    "chamber": "house",
+    "district": 9,
+    "campaign": "https://www.morgangriffithforcongress.com/",
+    "ballotpedia": "https://ballotpedia.org/Morgan_Griffith"
+  },
+
+  // Suhas Subramanyam (VA-10, Democrat)
+  "S001230": {
+    "name": "Suhas Subramanyam",
+    "party": "Democrat",
+    "chamber": "house",
+    "district": 10,
+    "campaign": "https://www.suhasforvirginia.com/",
+    "ballotpedia": "https://ballotpedia.org/Suhas_Subramanyam"
+  },
+
+  // James Walkinshaw (VA-11, Democrat)
+  "W000831": {
+    "name": "James Walkinshaw",
+    "party": "Democrat",
+    "chamber": "house",
+    "district": 11,
+    "campaign": "https://jameswalkinshaw.org/",
+    "ballotpedia": "https://ballotpedia.org/James_Walkinshaw"
+  },
+  
+  // Mark Warner (VA, Democrat)
+  "W000805": {
+    "name": "Mark Warner",
+    "party": "Democrat",
+    "chamber": "senate",
+    "district": null,
+    "campaign": "https://markwarnerva.com",
+    "ballotpedia": "https://ballotpedia.org/Mark_Warner"
+  },
+  // Tim Kaine (VA, Democrat)
+  "K000384": {
+    "name": "Tim Kaine",
+    "party": "Democrat",
+    "chamber": "senate",
+    "district": null,
+    "campaign": "https://timkaine.com",
+    "ballotpedia": "https://ballotpedia.org/Tim_Kaine"
+  }
+}
