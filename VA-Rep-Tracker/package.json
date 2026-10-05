@@ -7,10 +7,15 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test:scraper": "node --env-file=.env.local scripts/test-scrapePromises.js",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@browserbasehq/sdk": "2.21.0",
+    "@browserbasehq/stagehand": "^4.1.0",
+    "@supabase/supabase-js": "^2.117.2",
     "axios": "^1.13.6",
+    "jsonc-parser": "^3.3.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.1"

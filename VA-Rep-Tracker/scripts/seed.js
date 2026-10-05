@@ -1,9 +1,4 @@
 // One-time (re-runnable) seed: loads Virginia members and their URLs from urls.jsonc.
-//
-// Run from VA-Rep-Tracker/:
-//   npm install
-//   node --env-file=.env.local scripts/seed.js
-//
 // Needs in .env.local: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 import { readFileSync } from "node:fs";

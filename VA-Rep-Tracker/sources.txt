@@ -1,5 +1,0 @@
-congress.gov
-ballotpedia.org
-Anthropic Claude 4.5 Sonnet
-Google Gemini 2.5 Flash Pro
-house.gov
