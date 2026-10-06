@@ -413,6 +413,32 @@ code {
   color: #9c6a3f;
 }
 
+.rep-profile-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 12px;
+}
+
+.source-link {
+  display: inline-block;
+  color: #81502e;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.source-link:hover {
+  color: #4c2c17;
+}
+
+.analysis-date {
+  margin-top: 10px !important;
+  color: #8f5b33;
+  font-size: 12px;
+}
+
 .analysis h2,
 .graph-section h2,
 .breakdown-section h2 {
@@ -631,13 +657,13 @@ code {
 
 .graph-layout {
   display: grid;
-  grid-template-columns: 1fr 2fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 0 16px;
   align-items: start;
 }
 
 .graph-col--bills {
-  grid-column: 3;
+  grid-column: 2;
 }
 
 @media (max-width: 760px) {
@@ -660,6 +686,93 @@ code {
   .graph-col--bills {
     grid-column: 1;
   }
+}
+
+.senators-section {
+  margin: 0 0 20px;
+  padding: 20px 24px;
+  border: 1px solid #d6c5b0;
+  border-radius: 10px;
+  background: rgba(255, 248, 238, 0.85);
+  position: relative;
+  z-index: 1;
+}
+
+.senators-section h2 {
+  color: #763f16;
+  font-size: 1.2rem;
+  margin: 0 0 12px;
+}
+
+.senator-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.senator-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid #e4c8a6;
+  border-radius: 8px;
+  background: #fff4e1;
+}
+
+.senator-portrait {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 50%;
+  background: #fff8ee;
+}
+
+.senator-card h3 {
+  margin: 0;
+  color: #763f16;
+}
+
+.senator-card p {
+  margin: 4px 0 !important;
+  color: #6b4c2a;
+}
+
+.score-disclaimer {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.relationship-tag {
+  color: #6b4c2a;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.relationship-tag--cosponsor {
+  color: #365f75;
+}
+
+.cosponsored-toggle,
+.retry-btn {
+  padding: 8px 12px;
+  border: 1px solid #b18d6f;
+  border-radius: 6px;
+  background: #fff8ee;
+  color: #7e4f2f;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cosponsored-toggle:hover,
+.retry-btn:hover {
+  background: #ffe9c7;
+}
+
+.cosponsored-toggle {
+  margin: 8px 0 12px;
 }
 
 .graph-col h3 {
@@ -712,6 +825,15 @@ code {
 .graph-bill-card.is-hover-match {
   background: var(--hover-tint);
   border-color: var(--hover-border);
+}
+
+.graph-bill-card:focus-visible {
+  outline: 3px solid rgba(143, 91, 51, 0.45);
+  outline-offset: 2px;
+}
+
+.legislation-subheading {
+  margin-top: 22px !important;
 }
 
 .graph-promise-card:hover,
@@ -968,4 +1090,3 @@ code {
     transform: none !important;
   }
 }
-

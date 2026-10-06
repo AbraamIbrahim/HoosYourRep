@@ -1,3 +1,4 @@
+// Fetches, normalizes, and prepares Congress.gov data for database updates.
 import axios from "axios";
 import process from "node:process";
 
@@ -6,6 +7,7 @@ const CONGRESS_API_BASE_URL = "https://api.congress.gov/v3";
 const CURRENT_CONGRESS_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const CONGRESS_API_TIMEOUT_MS = 10_000;
 
+// Reads a Congress number from either the structured API field or its name.
 function parseCongressNumber(congressRecord) {
   if (Number.isInteger(congressRecord?.number) && congressRecord.number > 0) {
     return congressRecord.number;
@@ -17,6 +19,7 @@ function parseCongressNumber(congressRecord) {
   return congressNameMatch ? Number(congressNameMatch[1]) : null;
 }
 
+// Accepts the supported cached representations and returns a valid Congress number.
 function getCachedCongressNumber(metaValue) {
   const valueCandidate =
     typeof metaValue === "number" || typeof metaValue === "string"
@@ -28,6 +31,7 @@ function getCachedCongressNumber(metaValue) {
     : null;
 }
 
+// Extracts Congress records from the API's supported response shapes.
 function getCongressRecords(responseData) {
   if (Array.isArray(responseData)) {
     return responseData;
@@ -38,16 +42,18 @@ function getCongressRecords(responseData) {
   return [];
 }
 
-function getSponsoredLegislationRecords(responseData) {
+// Extracts legislation records from the named collection in an API response.
+function getMemberLegislationRecords(responseData, collectionName) {
   if (Array.isArray(responseData)) {
     return responseData;
   }
-  if (Array.isArray(responseData?.sponsoredLegislation)) {
-    return responseData.sponsoredLegislation;
+  if (Array.isArray(responseData?.[collectionName])) {
+    return responseData[collectionName];
   }
   return [];
 }
 
+// Requests the active Congress number when the Supabase cache is unavailable.
 async function fetchCurrentCongressFromApi() {
   const congressApiKey = process.env.CONGRESS_API_KEY;
   if (!congressApiKey) {
@@ -81,6 +87,7 @@ async function fetchCurrentCongressFromApi() {
   }
 }
 
+// Uses a fresh cached Congress number when possible and refreshes it otherwise.
 export async function getCurrentCongress({ supabase, dryRun = false }) {
   let cachedCongressNumber = null;
   let cachedAtMs = null;
@@ -134,16 +141,86 @@ export async function getCurrentCongress({ supabase, dryRun = false }) {
   }
 }
 
-export async function getSponsoredBills(bioguideId, currentCongress) {
+// Converts a valid introduced date into a sortable timestamp.
+function getIntroducedDateTimestamp(introducedDate) {
+  if (typeof introducedDate !== "string") {
+    return null;
+  }
+
+  const timestamp = Date.parse(introducedDate);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+// Filters malformed legislation, prioritizes current bills, sorts by date, and caps results.
+export function normalizeBillRecords(
+  responseData,
+  collectionName,
+  currentCongress,
+  limit = 10,
+) {
+  const billRecords = getMemberLegislationRecords(responseData, collectionName)
+    .flatMap((billRecord) => {
+      const title = billRecord?.title ?? billRecord?.latestTitle;
+      if (
+        !billRecord ||
+        !Number.isInteger(Number(billRecord.congress)) ||
+        Number(billRecord.congress) < 1 ||
+        billRecord.type == null ||
+        !String(billRecord.type).trim() ||
+        billRecord.number == null ||
+        !String(billRecord.number).trim() ||
+        typeof title !== "string" ||
+        !title.trim()
+      ) {
+        return [];
+      }
+
+      return [{
+        congress: Number(billRecord.congress),
+        type: String(billRecord.type),
+        number: String(billRecord.number),
+        title: title.trim(),
+        introducedDate:
+          typeof billRecord.introducedDate === "string"
+            ? billRecord.introducedDate
+            : null,
+      }];
+    });
+
+  return billRecords
+    .sort((firstBill, secondBill) => {
+      const congressOrder =
+        Number(secondBill.congress === currentCongress) -
+        Number(firstBill.congress === currentCongress);
+      if (congressOrder !== 0) {
+        return congressOrder;
+      }
+
+      const firstTimestamp = getIntroducedDateTimestamp(
+        firstBill.introducedDate,
+      );
+      const secondTimestamp = getIntroducedDateTimestamp(
+        secondBill.introducedDate,
+      );
+      if (firstTimestamp === null) return secondTimestamp === null ? 0 : 1;
+      if (secondTimestamp === null) return -1;
+      return secondTimestamp - firstTimestamp;
+    })
+    .slice(0, limit);
+}
+
+// Fetches one member's sponsored or cosponsored legislation from Congress.gov.
+async function getMemberBills(bioguideId, currentCongress, sponsorship, limit) {
   const congressApiKey = process.env.CONGRESS_API_KEY;
   if (!congressApiKey) {
     throw new Error("Congress.gov API key is not configured");
   }
 
+  const collectionName = `${sponsorship}Legislation`;
   let response;
   try {
     response = await axios.get(
-      `${CONGRESS_API_BASE_URL}/member/${encodeURIComponent(bioguideId)}/sponsored-legislation`,
+      `${CONGRESS_API_BASE_URL}/member/${encodeURIComponent(bioguideId)}/${sponsorship}-legislation`,
       {
         params: { api_key: congressApiKey, format: "json", limit: 50 },
         timeout: CONGRESS_API_TIMEOUT_MS,
@@ -153,33 +230,45 @@ export async function getSponsoredBills(bioguideId, currentCongress) {
     const responseStatus = error.response?.status;
     throw new Error(
       responseStatus
-        ? `Congress.gov sponsored legislation request failed (HTTP ${responseStatus})`
-        : "Congress.gov sponsored legislation request failed",
+        ? `Congress.gov ${sponsorship} legislation request failed (HTTP ${responseStatus})`
+        : `Congress.gov ${sponsorship} legislation request failed`,
     );
   }
 
-  const billRecords = getSponsoredLegislationRecords(response.data)
-    .filter(
-      (billRecord) =>
-        billRecord &&
-        Number.isInteger(Number(billRecord.congress)) &&
-        billRecord.type != null &&
-        billRecord.number != null &&
-        typeof billRecord.title === "string" &&
-        billRecord.title.trim(),
-    )
-    .map((billRecord) => ({
-      congress: Number(billRecord.congress),
-      type: String(billRecord.type),
-      number: String(billRecord.number),
-      title: billRecord.title.trim(),
-    }));
+  return normalizeBillRecords(
+    response.data,
+    collectionName,
+    currentCongress,
+    limit,
+  );
+}
 
-  return billRecords
-    .sort(
-      (firstBill, secondBill) =>
-        Number(secondBill.congress === currentCongress) -
-        Number(firstBill.congress === currentCongress),
-    )
-    .slice(0, 10);
+// Loads up to ten recent sponsored bills for one member.
+export async function getSponsoredBills(bioguideId, currentCongress) {
+  return getMemberBills(bioguideId, currentCongress, "sponsored", 10);
+}
+
+// Loads up to twenty recent cosponsored bills for one member.
+export async function getCosponsoredBills(bioguideId, currentCongress) {
+  return getMemberBills(bioguideId, currentCongress, "cosponsored", 20);
+}
+
+// Converts normalized bill dates to the database column name expected by the RPC.
+export function toBillRpcPayload(bills) {
+  return bills.map((bill) => ({
+    congress: bill.congress,
+    type: bill.type,
+    number: bill.number,
+    title: bill.title,
+    introduced_date: bill.introducedDate ?? null,
+  }));
+}
+
+// Builds the named arguments required by the relationship-aware replace_bills RPC.
+export function buildReplaceBillsRpcArgs(bioguideId, relationship, bills) {
+  return {
+    p_bioguide_id: bioguideId,
+    p_relationship: relationship,
+    p_bills: toBillRpcPayload(bills),
+  };
 }

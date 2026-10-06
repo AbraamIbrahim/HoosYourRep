@@ -1,3 +1,4 @@
+// Races an operation against a labeled timeout and always clears the timer.
 export function withTimeout(promise, ms, label) {
   let timeoutId;
   const timeout = new Promise((resolve, reject) => {

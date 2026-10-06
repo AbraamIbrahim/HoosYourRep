@@ -1,8 +1,10 @@
+// Creates and caches the privileged Supabase client for server-side jobs only.
 import { createClient } from "@supabase/supabase-js";
 import process from "node:process";
 
 let supabaseAdminClient;
 
+// Returns the server client, failing clearly when its private credentials are absent.
 export function getSupabaseAdmin() {
   if (supabaseAdminClient) {
     return supabaseAdminClient;

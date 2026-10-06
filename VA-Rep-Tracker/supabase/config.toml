@@ -1,0 +1,4 @@
+project_id = "va-rep-tracker"
+
+[db.migrations]
+enabled = true

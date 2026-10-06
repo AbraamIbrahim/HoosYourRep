@@ -1,3 +1,4 @@
+// Builds and validates the model request used to link campaign promises to bills.
 import axios from "axios";
 import process from "node:process";
 
@@ -5,6 +6,7 @@ const GEMINI_API_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 const GEMINI_REQUEST_TIMEOUT_MS = 20_000;
 
+// Separates model reasoning text from normal response text.
 function getTextParts(parts, isThinking) {
   return parts
     .filter(
@@ -15,6 +17,7 @@ function getTextParts(parts, isThinking) {
     .map((part) => part.text);
 }
 
+// Parses model JSON while accepting responses wrapped in Markdown fences.
 function parseJsonResponse(responseText) {
   const normalizedText = responseText
     .replace(/^```(?:json)?\s*/i, "")
@@ -28,10 +31,12 @@ function parseJsonResponse(responseText) {
   }
 }
 
+// Formats a bill identifier consistently with Congress.gov legislation records.
 function getBillIdentifier(bill) {
   return `${bill.type.toUpperCase()} ${bill.number}`;
 }
 
+// Creates instructions that give the model numbered promises and labeled bills.
 export function createAnalysisPrompt(member, promises, bills) {
   const memberDescription =
     member.chamber === "senate"
@@ -44,18 +49,22 @@ export function createAnalysisPrompt(member, promises, bills) {
     )
     .join("\n");
   const billDescriptions = bills
-    .map((bill) => `${getBillIdentifier(bill)}: ${bill.title}`)
+    .map((bill) => {
+      const label =
+        bill.relationship === "cosponsor" ? "COSPONSORED" : "SPONSORED";
+      return `[${label}] ${getBillIdentifier(bill)}: ${bill.title}`;
+    })
     .join("\n");
 
   return `
-You are analyzing how well a political representative's stated campaign promises align with bills they sponsored.
+You are analyzing how well a political representative's stated campaign promises align with bills they sponsored or cosponsored.
 
 Representative: ${member.name} (${memberDescription})
 
 Campaign Promises (numbered):
 ${promiseDescriptions}
 
-Sponsored Bills (bill identifier and title):
+Bills (relationship, identifier, and title):
 ${billDescriptions || "(No bills found)"}
 
 Return ONLY a raw JSON object (no markdown, no code fences) in this exact shape:
@@ -63,6 +72,7 @@ Return ONLY a raw JSON object (no markdown, no code fences) in this exact shape:
   "score": <integer 0-100>,
   "breakdown": [
     {
+      "promiseNumber": <1-based number from the numbered promise list>,
       "promiseTopic": "<topic from promise>",
       "promiseText": "<full promise text>",
       "correlatingBills": ["<TYPE NUMBER identifier>"],
@@ -71,11 +81,14 @@ Return ONLY a raw JSON object (no markdown, no code fences) in this exact shape:
   ]
 }
 
-For each campaign promise, list only bill identifiers from the Sponsored Bills list that best correlate to it. Cite each bill in exactly the format "TYPE NUMBER" shown in the list (for example, "HR 7992" or "HCONRES 62"); do not cite a bare number. A bill may appear under multiple promises. If no bills correlate, use an empty array. Do not include bill objects or invent identifiers.
+For each campaign promise, set promiseNumber to its exact 1-based number from the numbered list. List only bill identifiers from the Bills list that best correlate to it. Cite each bill in exactly the format "TYPE NUMBER" shown in the list (for example, "HR 7992" or "HCONRES 62"); do not cite a bare number. A bill may appear under multiple promises. If no bills correlate, use an empty array. Do not include bill objects or invent identifiers.
+
+Treat sponsorship as stronger evidence of commitment than cosponsorship. A bill title alone does not prove that the bill passed or that its goals were achieved.
 `;
 }
 
-export function validateAndNormalizeAnalysis(parsedAnalysis, bills) {
+// Validates model promise references and replaces echoed promise text with DB data.
+export function validateAndNormalizeAnalysis(parsedAnalysis, promises, bills) {
   const numericScore = Number(parsedAnalysis?.score);
   if (!Number.isFinite(numericScore)) {
     throw new Error("Gemini analysis did not include a valid numeric score");
@@ -85,20 +98,30 @@ export function validateAndNormalizeAnalysis(parsedAnalysis, bills) {
   }
 
   const validBillIdentifiers = new Set(bills.map(getBillIdentifier));
+  const seenPromisePositions = new Set();
   const breakdown = parsedAnalysis.breakdown.map((breakdownEntry) => {
     if (
       !breakdownEntry ||
-      typeof breakdownEntry.promiseTopic !== "string" ||
-      typeof breakdownEntry.promiseText !== "string" ||
+      !Number.isInteger(breakdownEntry.promiseNumber) ||
+      breakdownEntry.promiseNumber < 1 ||
+      breakdownEntry.promiseNumber > promises.length ||
       typeof breakdownEntry.reasoning !== "string" ||
       !Array.isArray(breakdownEntry.correlatingBills)
     ) {
       throw new Error("Gemini returned an invalid analysis breakdown entry");
     }
 
+    const promisePosition = breakdownEntry.promiseNumber - 1;
+    if (seenPromisePositions.has(promisePosition)) {
+      throw new Error("Gemini returned duplicate promise numbers");
+    }
+    seenPromisePositions.add(promisePosition);
+
+    const promise = promises[promisePosition];
     return {
-      promiseTopic: breakdownEntry.promiseTopic,
-      promiseText: breakdownEntry.promiseText,
+      promisePosition,
+      promiseTopic: promise.topic,
+      promiseText: promise.text,
       correlatingBills: breakdownEntry.correlatingBills
         .filter((billIdentifier) => typeof billIdentifier === "string")
         .filter((billIdentifier) =>
@@ -114,6 +137,7 @@ export function validateAndNormalizeAnalysis(parsedAnalysis, bills) {
   };
 }
 
+// Calls Gemini, parses its response, and returns normalized analysis.
 export async function analyzePromises(member, promises, bills) {
   const geminiApiKey = process.env.GEMINI_API_KEY;
   if (!geminiApiKey) {
@@ -163,7 +187,11 @@ export async function analyzePromises(member, promises, bills) {
   }
 
   const parsedAnalysis = parseJsonResponse(responseText);
-  const normalizedAnalysis = validateAndNormalizeAnalysis(parsedAnalysis, bills);
+  const normalizedAnalysis = validateAndNormalizeAnalysis(
+    parsedAnalysis,
+    promises,
+    bills,
+  );
 
   return {
     ...normalizedAnalysis,

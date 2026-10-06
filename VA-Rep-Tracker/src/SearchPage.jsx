@@ -1,33 +1,55 @@
+// Provides county lookup and navigates to the selected district's shareable URL.
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ziptodist from "../data/ziptodist.json";
-import reps from "../data/reps.json";
 
+// Displays county matches and routes an exact selection to its representative.
 export default function SearchPage() {
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
 
   const normalizedQuery = query.trim().toLowerCase();
+  // Restrict county results to the state's eleven valid House districts.
+  const availableDistricts = useMemo(
+    () => new Set(Array.from({ length: 11 }, (_, index) => String(index + 1))),
+    [],
+  );
+  // Resolve a case-insensitive exact county name for submission.
+  const selectedCounty = useMemo(
+    () =>
+      Object.keys(ziptodist).find(
+        (name) => name.toLowerCase() === normalizedQuery,
+      ),
+    [normalizedQuery],
+  );
 
+  // Build a short list of counties matching the current search text.
   const results = useMemo(() => {
     if (!normalizedQuery) return [];
     return Object.keys(ziptodist)
-      .filter((name) => name.toLowerCase().includes(normalizedQuery))
+      .filter(
+        (name) =>
+          name.toLowerCase().includes(normalizedQuery) &&
+          availableDistricts.has(String(ziptodist[name])),
+      )
       .slice(0, 30)
       .map((name) => ({ name, district: ziptodist[name] }));
-  }, [normalizedQuery]);
+  }, [availableDistricts, normalizedQuery]);
 
-  const isExactMatch = Object.prototype.hasOwnProperty.call(ziptodist, query);
+  const isExactMatch =
+    selectedCounty !== undefined &&
+    availableDistricts.has(String(ziptodist[selectedCounty]));
 
+  // Use the chosen full county name as the exact-match search value.
   const handleSelect = (name) => setQuery(name);
 
+  // Navigate only after a valid county has resolved to a Virginia district.
   const handleSubmit = () => {
-    if (!isExactMatch) return;
-    const districtNum = ziptodist[query];
-    const repData = reps[districtNum];
-    if (repData) {
-      navigate("/results", { state: { district: districtNum, county: query } });
-    }
+    if (!isExactMatch || !selectedCounty) return;
+    const district = ziptodist[selectedCounty];
+    navigate(
+      `/rep/${district}?county=${encodeURIComponent(selectedCounty)}`,
+    );
   };
 
   return (

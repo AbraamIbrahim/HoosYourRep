@@ -1,8 +1,14 @@
+// Authenticated Vercel endpoint for refreshing saved member, promise, bill, and analysis data.
 import { Buffer } from "node:buffer";
 import { timingSafeEqual } from "node:crypto";
 import process from "node:process";
 import { analyzePromises } from "../lib/analyzePromises.js";
-import { getCurrentCongress, getSponsoredBills } from "../lib/congress.js";
+import {
+  buildReplaceBillsRpcArgs,
+  getCosponsoredBills,
+  getCurrentCongress,
+  getSponsoredBills,
+} from "../lib/congress.js";
 import {
   getPositiveIntegerSetting,
   getPromiseReplacementThreshold,
@@ -20,9 +26,7 @@ const MEMBER_START_RESERVE_MS = 15_000;
 const MAX_REFRESH_CONCURRENCY = 4;
 const MAX_MEMBER_LIMIT = 13;
 
-// Daily cron job that will visit all 13 congress people's websites, scrape their promises, call Congress.gov
-    // API for spon and cospon legislation, run the Gemini analysis, and update in Supabase
-
+// Compares authorization credentials without leaking secret values in timing.
 function isAuthorized(authorizationHeader, cronSecret) {
   if (typeof authorizationHeader !== "string" || !cronSecret) {
     return false;
@@ -36,6 +40,7 @@ function isAuthorized(authorizationHeader, cronSecret) {
   );
 }
 
+// Reads a query value from Vercel's parsed request or the raw URL.
 function getQueryParameter(request, parameterName) {
   const requestValue = request.query?.[parameterName];
   if (requestValue !== undefined) {
@@ -46,11 +51,13 @@ function getQueryParameter(request, parameterName) {
   return requestUrl.searchParams.get(parameterName);
 }
 
+// Produces a bounded error string suitable for API responses and refresh reports.
 function getErrorMessage(error) {
   const message = error instanceof Error ? error.message : "Unknown error";
   return message.slice(0, 500);
 }
 
+// Classifies scrape results so incomplete or empty scrapes do not replace saved data.
 function getScrapeStatus(scrapeResult, promiseCount, replacementThreshold) {
   if (promiseCount >= replacementThreshold) {
     return {
@@ -82,6 +89,7 @@ function getScrapeStatus(scrapeResult, promiseCount, replacementThreshold) {
   };
 }
 
+// Converts saved promise rows to the shape used by the scraper and analyzer.
 function mapSavedPromises(savedPromiseRows) {
   return savedPromiseRows.map((promiseRow) => ({
     topic: promiseRow.topic,
@@ -91,15 +99,19 @@ function mapSavedPromises(savedPromiseRows) {
   }));
 }
 
+// Converts saved bill rows to the shape consumed by analysis.
 function mapSavedBills(savedBillRows) {
   return savedBillRows.map((billRow) => ({
     congress: billRow.congress,
     type: billRow.type,
     number: String(billRow.number),
     title: billRow.title,
+    introducedDate: billRow.introduced_date,
+    relationship: billRow.relationship,
   }));
 }
 
+// Loads saved promises and both bill relationships for one member.
 async function readExistingMemberData(supabase, bioguideId) {
   const [promisesResult, billsResult] = await Promise.all([
     supabase
@@ -109,20 +121,25 @@ async function readExistingMemberData(supabase, bioguideId) {
       .order("position", { ascending: true }),
     supabase
       .from("bills")
-      .select("congress, type, number, title")
+      .select("congress, type, number, title, introduced_date, relationship")
       .eq("bioguide_id", bioguideId),
   ]);
 
   if (promisesResult.error || billsResult.error) {
-    throw new Error("Could not load existing promises and bills");
+    throw new Error("Could not load existing promises and legislation");
   }
 
+  const savedBills = mapSavedBills(billsResult.data ?? []);
   return {
     promises: mapSavedPromises(promisesResult.data ?? []),
-    bills: mapSavedBills(billsResult.data ?? []),
+    bills: savedBills.filter((bill) => bill.relationship !== "cosponsor"),
+    cosponsoredBills: savedBills.filter(
+      (bill) => bill.relationship === "cosponsor",
+    ),
   };
 }
 
+// Records the scrape attempt unless the request is a non-writing dry run.
 async function writeScrapeStatus(
   supabase,
   member,
@@ -150,6 +167,7 @@ async function writeScrapeStatus(
   return memberStatusRow;
 }
 
+// Refreshes one member while preserving each saved list when its own update fails.
 async function refreshMember(member, context) {
   const memberStartedAt = Date.now();
   const memberResult = {
@@ -163,6 +181,7 @@ async function refreshMember(member, context) {
       source: null,
     },
     bills: { status: "kept", count: 0 },
+    cosponsoredBills: { status: "kept", count: 0 },
     analysis: { status: "skipped_no_data", score: null },
     error: null,
   };
@@ -171,6 +190,7 @@ async function refreshMember(member, context) {
 
   let existingPromises = [];
   let existingBills = [];
+  let existingCosponsoredBills = [];
   try {
     const existingData = await readExistingMemberData(
       context.supabase,
@@ -178,6 +198,7 @@ async function refreshMember(member, context) {
     );
     existingPromises = existingData.promises;
     existingBills = existingData.bills;
+    existingCosponsoredBills = existingData.cosponsoredBills;
   } catch (error) {
     const message = getErrorMessage(error);
     memberErrors.push(message);
@@ -200,6 +221,11 @@ async function refreshMember(member, context) {
       memberResult.would_write = {
         promises: null,
         bills: null,
+        cosponsoredBills: null,
+        billCounts: {
+          sponsored: existingBills.length,
+          cosponsored: existingCosponsoredBills.length,
+        },
         analysis: null,
         member: memberStatusRow ?? {
           last_scraped_at: attemptedAt,
@@ -209,6 +235,7 @@ async function refreshMember(member, context) {
       };
     }
     memberResult.bills.count = existingBills.length;
+    memberResult.cosponsoredBills.count = existingCosponsoredBills.length;
     memberResult.elapsedMs = Date.now() - memberStartedAt;
     console.log(
       `[refresh] ${member.bioguide_id} failed; ${memberResult.elapsedMs}ms`,
@@ -297,20 +324,24 @@ async function refreshMember(member, context) {
   let billsToWrite = null;
   if (!context.congressError) {
     try {
-      const scrapedBills = await getSponsoredBills(
+      const scrapedBills = (await getSponsoredBills(
         member.bioguide_id,
         context.congress,
-      );
+      )).map((bill) => ({ ...bill, relationship: "sponsor" }));
       if (scrapedBills.length > 0) {
         billsToWrite = scrapedBills;
         if (context.dryRun) {
           billsForAnalysis = scrapedBills;
           memberResult.bills.status = "would_replace";
         } else {
-          const { error } = await context.supabase.rpc("replace_bills", {
-            p_bioguide_id: member.bioguide_id,
-            p_bills: scrapedBills,
-          });
+          const { error } = await context.supabase.rpc(
+            "replace_bills",
+            buildReplaceBillsRpcArgs(
+              member.bioguide_id,
+              "sponsor",
+              scrapedBills,
+            ),
+          );
           if (error) {
             memberErrors.push("Could not replace saved sponsored bills");
             memberResult.bills.status = "kept_write_failed";
@@ -332,15 +363,58 @@ async function refreshMember(member, context) {
   }
   memberResult.bills.count = billsForAnalysis.length;
 
+  let cosponsoredBills = existingCosponsoredBills;
+  let cosponsoredBillsToWrite = null;
+  if (!context.congressError) {
+    try {
+      const scrapedCosponsoredBills = (await getCosponsoredBills(
+        member.bioguide_id,
+        context.congress,
+      )).map((bill) => ({ ...bill, relationship: "cosponsor" }));
+      if (scrapedCosponsoredBills.length > 0) {
+        cosponsoredBillsToWrite = scrapedCosponsoredBills;
+        if (context.dryRun) {
+          cosponsoredBills = scrapedCosponsoredBills;
+          memberResult.cosponsoredBills.status = "would_replace";
+        } else {
+          const { error } = await context.supabase.rpc(
+            "replace_bills",
+            buildReplaceBillsRpcArgs(
+              member.bioguide_id,
+              "cosponsor",
+              scrapedCosponsoredBills,
+            ),
+          );
+          if (error) {
+            memberErrors.push("Could not replace saved co-sponsored bills");
+            memberResult.cosponsoredBills.status = "kept_write_failed";
+          } else {
+            cosponsoredBills = scrapedCosponsoredBills;
+            memberResult.cosponsoredBills.status = "replaced";
+          }
+        }
+      } else {
+        memberResult.cosponsoredBills.status = "kept_empty_response";
+      }
+    } catch (error) {
+      memberErrors.push(getErrorMessage(error));
+      memberResult.cosponsoredBills.status = "kept_fetch_failed";
+    }
+  } else {
+    memberResult.cosponsoredBills.status = "kept_congress_unavailable";
+  }
+  memberResult.cosponsoredBills.count = cosponsoredBills.length;
+
   let analysisToWrite = null;
-  if (promiseReplacementData.length === 0 || billsForAnalysis.length === 0) {
+  const allBillsForAnalysis = [...billsForAnalysis, ...cosponsoredBills];
+  if (promiseReplacementData.length === 0 || allBillsForAnalysis.length === 0) {
     memberResult.analysis.status = "skipped_no_data";
   } else {
     try {
       analysisToWrite = await analyzePromises(
         member,
         promiseReplacementData,
-        billsForAnalysis,
+        allBillsForAnalysis,
       );
       memberResult.analysis.score = analysisToWrite.score;
       if (context.dryRun) {
@@ -371,6 +445,11 @@ async function refreshMember(member, context) {
     memberResult.would_write = {
       promises: shouldReplace ? scrapedPromises : null,
       bills: billsToWrite,
+      cosponsoredBills: cosponsoredBillsToWrite,
+      billCounts: {
+        sponsored: billsForAnalysis.length,
+        cosponsored: cosponsoredBills.length,
+      },
       analysis: analysisToWrite,
       member: memberStatusRow ?? {
         last_scraped_at: attemptedAt,
@@ -387,11 +466,13 @@ async function refreshMember(member, context) {
   console.log(
     `[refresh] ${member.bioguide_id} ${memberResult.scrape.status}, ` +
       `${memberResult.scrape.found} promises, ${memberResult.bills.count} bills, ` +
+      `${memberResult.cosponsoredBills.count} co-sponsored bills, ` +
       `${memberResult.analysis.status}, ${memberResult.elapsedMs}ms`,
   );
   return memberResult;
 }
 
+// Validates the request, processes eligible members, and reports refresh outcomes.
 export default async function handler(request, response) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
@@ -522,6 +603,7 @@ export default async function handler(request, response) {
   const memberResults = new Array(members.length);
   let nextMemberIndex = 0;
 
+  // Processes queued members until the time budget no longer permits another start.
   async function runMemberWorker() {
     while (nextMemberIndex < members.length) {
       const elapsedMs = Date.now() - startedAt;
@@ -565,6 +647,7 @@ export default async function handler(request, response) {
             source: null,
           },
           bills: { status: "kept", count: 0 },
+          cosponsoredBills: { status: "kept", count: 0 },
           analysis: { status: "failed", score: null },
           error: failureMessage,
         };
@@ -587,12 +670,23 @@ export default async function handler(request, response) {
     bioguide_id: member.bioguide_id,
     name: member.name,
   }));
+  const completedMemberResults = memberResults.filter(Boolean);
   return response.status(200).json({
-    ok: memberResults.every((memberResult) => !memberResult.error),
+    ok: completedMemberResults.every((memberResult) => !memberResult.error),
     dryRun,
     elapsedMs: Date.now() - startedAt,
     congress,
-    members: memberResults.filter(Boolean),
+    billCounts: {
+      sponsored: completedMemberResults.reduce(
+        (total, memberResult) => total + memberResult.bills.count,
+        0,
+      ),
+      cosponsored: completedMemberResults.reduce(
+        (total, memberResult) => total + memberResult.cosponsoredBills.count,
+        0,
+      ),
+    },
+    members: completedMemberResults,
     skipped_budget: skippedBudget,
   });
 }

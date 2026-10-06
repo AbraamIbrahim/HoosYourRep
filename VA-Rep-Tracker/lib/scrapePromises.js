@@ -1,3 +1,4 @@
+// Scrapes campaign and Ballotpedia pages into sourced, normalized promises.
 // Scrapes a member's campaign promises. Two strategies per URL:
 //   1. Browserbase Fetch API (cheap, no browser, but does NOT run JavaScript)
 //   2. Stagehand browser session (renders JS, can follow the "issues" link) - only if (1) finds nothing
@@ -32,6 +33,7 @@ const PromisesSchema = z.object({
   ),
 });
 
+// Builds extraction instructions that limit output to commitments stated on-page.
 function promiseInstruction(name, kind) {
   const what =
     kind === "ballotpedia"
@@ -46,6 +48,7 @@ function promiseInstruction(name, kind) {
 }
 
 
+// Defines the structured response shape required from Browserbase Fetch.
 function fetchSchema(name, kind) {
   const what = kind === "ballotpedia" ? "policy positions or campaign themes" : "policy commitments or priorities";
   return {
@@ -77,6 +80,7 @@ function fetchSchema(name, kind) {
   };
 }
 
+// Validates and normalizes extracted promises while assigning their source URL.
 function cleanPromises(list, sourceUrl) {
   return (list ?? [])
     .filter((promiseEntry) => promiseEntry && typeof promiseEntry.topic === "string" && typeof promiseEntry.text === "string" && promiseEntry.topic.trim() && promiseEntry.text.trim())
@@ -92,6 +96,7 @@ function cleanPromises(list, sourceUrl) {
     }));
 }
 
+// Uses Browserbase's non-rendering fetch API to extract page promises cheaply.
 async function scrapeWithFetch(url, name, kind) {
   const browserbaseClient = createBrowserbaseClient(
     process.env.BROWSERBASE_API_KEY,
@@ -131,6 +136,7 @@ async function scrapeWithFetch(url, name, kind) {
   return cleanPromises(browserbaseResponse.content?.promises, url);
 }
 
+// Uses a rendered browser when a campaign site needs JavaScript or link navigation.
 async function scrapeWithBrowser(url, name, kind) {
   const { Stagehand } = await import("@browserbasehq/stagehand");
   const stagehand = new Stagehand({
@@ -173,7 +179,7 @@ async function scrapeWithBrowser(url, name, kind) {
 }
 
 /**
- * Try the campaign site first, then Ballotpedia.
+ * Scrapes campaign and Ballotpedia sources, using browser rendering when needed.
  * @param {{name:string, campaign_url?:string|null, ballotpedia_url?:string|null}} member
  * @returns {Promise<{promises:Array, source:string|null, method:string|null, errors:string[]}>}
  */
