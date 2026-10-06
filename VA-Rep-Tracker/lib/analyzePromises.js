@@ -30,6 +30,37 @@ function getBillIdentifier(bill) {
   return `${bill.type.toUpperCase()} ${bill.number}`;
 }
 
+// Extracts only Gemini's documented error status/message fields and removes
+// credential-like text before the detail can reach refresh logs or responses.
+function getSafeGeminiError(error, geminiApiKey) {
+  const responseStatus = error.response?.status;
+  const providerError = error.response?.data?.error;
+  const providerStatus =
+    typeof providerError?.status === "string" ? providerError.status : null;
+  let message =
+    typeof providerError?.message === "string" ? providerError.message : null;
+
+  if (message) {
+    if (geminiApiKey) {
+      message = message.split(geminiApiKey).join("[REDACTED]");
+    }
+    message = message
+      .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, "[REDACTED]")
+      .replace(/\bBearer\s+\S+/gi, "Bearer [REDACTED]")
+      .replace(/([?&]key=)[^&\s]+/gi, "$1[REDACTED]")
+      .replace(/[\r\n\t]+/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim()
+      .slice(0, 300);
+  }
+
+  const detail = [providerStatus, message].filter(Boolean).join(": ");
+  if (responseStatus) {
+    return `Gemini analysis request failed (HTTP ${responseStatus}${detail ? `, ${detail}` : ""})`;
+  }
+  return "Gemini analysis request failed";
+}
+
 // Builds the full analysis prompt from the representative, ordered promises,
 // and relationship-tagged bill titles. Instructions require stable promise
 // numbering, constrain cited identifiers, and temper claims about cosponsorship
@@ -173,12 +204,7 @@ export async function analyzePromises(member, promises, bills) {
         },
       );
     } catch (error) {
-      const responseStatus = error.response?.status;
-      throw new Error(
-        responseStatus
-          ? `Gemini analysis request failed (HTTP ${responseStatus})`
-          : "Gemini analysis request failed",
-      );
+      throw new Error(getSafeGeminiError(error, geminiApiKey));
     }
 
     try {

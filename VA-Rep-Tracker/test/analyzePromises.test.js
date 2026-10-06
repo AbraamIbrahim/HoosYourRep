@@ -259,3 +259,51 @@ test("throws after the second invalid Gemini response", async () => {
     }
   }
 });
+
+test("includes safe Gemini error details while redacting credentials", async () => {
+  const originalPost = axios.post;
+  const originalApiKey = process.env.GEMINI_API_KEY;
+  const apiKey = "test-gemini-key-secret";
+  axios.post = async () => {
+    const error = new Error("Request failed");
+    error.response = {
+      status: 404,
+      data: {
+        error: {
+          status: "NOT_FOUND",
+          message:
+            `models/gemini-2.5-flash is unavailable; ${apiKey}; ` +
+            "API key was invalid; key=AIza123456789012345678901234567890",
+        },
+      },
+    };
+    throw error;
+  };
+  process.env.GEMINI_API_KEY = apiKey;
+
+  try {
+    await assert.rejects(
+      analyzePromises(
+        { name: "Example", chamber: "house", district: 1, party: "A" },
+        promises,
+        bills,
+      ),
+      (error) => {
+        assert.match(error.message, /HTTP 404/);
+        assert.match(error.message, /NOT_FOUND/);
+        assert.match(error.message, /models\/gemini-2\.5-flash/);
+        assert.doesNotMatch(error.message, /test-gemini-key-secret/);
+        assert.doesNotMatch(error.message, /AIza123456789012345678901234567890/);
+        assert.match(error.message, /key=\[REDACTED\]/);
+        return true;
+      },
+    );
+  } finally {
+    axios.post = originalPost;
+    if (originalApiKey === undefined) {
+      delete process.env.GEMINI_API_KEY;
+    } else {
+      process.env.GEMINI_API_KEY = originalApiKey;
+    }
+  }
+});
