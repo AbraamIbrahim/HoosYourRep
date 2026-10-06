@@ -168,8 +168,10 @@ test("retries invalid Gemini output once and requests JSON MIME type", async () 
   const originalPost = axios.post;
   const originalApiKey = process.env.GEMINI_API_KEY;
   const requestBodies = [];
+  const requestUrls = [];
   let attempt = 0;
-  axios.post = async (_url, body, options) => {
+  axios.post = async (url, body, options) => {
+    requestUrls.push(url);
     requestBodies.push({ body, options });
     attempt += 1;
     return {
@@ -211,6 +213,10 @@ test("retries invalid Gemini output once and requests JSON MIME type", async () 
 
     assert.equal(attempt, 2);
     assert.equal(analysis.breakdown[0].promisePosition, 0);
+    assert.equal(
+      requestUrls[0],
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+    );
     assert.equal(
       requestBodies[0].body.generationConfig.responseMimeType,
       "application/json",

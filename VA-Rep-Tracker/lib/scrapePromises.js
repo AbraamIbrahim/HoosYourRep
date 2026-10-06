@@ -11,7 +11,7 @@ import { createBrowserbaseClient } from "./browserBaseClient.js";
 import process from "node:process";
 import { z } from "zod/v3";
 
-const MODEL = "google/gemini-2.5-flash";
+const MODEL = "google/gemini-3.8-flash";
 const MAX_PROMISES = 10;
 
 const IssuesLinkSchema = z.object({

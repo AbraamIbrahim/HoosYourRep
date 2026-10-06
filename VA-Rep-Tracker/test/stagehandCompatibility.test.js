@@ -8,7 +8,7 @@ test("the scraper's Stagehand v3 API can be constructed offline", () => {
 
   const stagehand = new Stagehand({
     env: "BROWSERBASE",
-    model: { modelName: "google/gemini-2.5-flash", apiKey: "x" },
+    model: { modelName: "google/gemini-3.8-flash", apiKey: "x" },
     verbose: 0,
   });
 
