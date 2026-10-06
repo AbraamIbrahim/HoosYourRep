@@ -52,3 +52,10 @@ export function getPositiveIntegerSetting(
 
   return parsedValue;
 }
+
+// Reserves enough time for one member's scrape, two Congress.gov calls, and
+// analysis. The handler may start work only while elapsed time is at or below
+// the returned cutoff.
+export function getMemberStartCutoffMs(timeBudgetMs, memberTimeoutMs) {
+  return timeBudgetMs - memberTimeoutMs - 45_000;
+}

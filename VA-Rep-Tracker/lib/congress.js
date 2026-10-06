@@ -165,9 +165,9 @@ function getIntroducedDateTimestamp(introducedDate) {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-// Removes records missing required identifiers or titles, normalizes fields,
-// prioritizes current-Congress bills, sorts dated bills newest first (undated
-// records last), and applies the requested per-relationship cap.
+// Removes records missing required identifiers or titles, keeps only the
+// requested Congress to avoid ambiguous bill identifiers, sorts dated bills
+// newest first (undated records last), and applies the relationship cap.
 export function normalizeBillRecords(
   responseData,
   collectionName,
@@ -180,7 +180,7 @@ export function normalizeBillRecords(
       if (
         !billRecord ||
         !Number.isInteger(Number(billRecord.congress)) ||
-        Number(billRecord.congress) < 1 ||
+        Number(billRecord.congress) !== currentCongress ||
         billRecord.type == null ||
         !String(billRecord.type).trim() ||
         billRecord.number == null ||
@@ -205,13 +205,6 @@ export function normalizeBillRecords(
 
   return billRecords
     .sort((firstBill, secondBill) => {
-      const congressOrder =
-        Number(secondBill.congress === currentCongress) -
-        Number(firstBill.congress === currentCongress);
-      if (congressOrder !== 0) {
-        return congressOrder;
-      }
-
       const firstTimestamp = getIntroducedDateTimestamp(
         firstBill.introducedDate,
       );
@@ -235,26 +228,44 @@ async function getMemberBills(bioguideId, currentCongress, sponsorship, limit) {
   }
 
   const collectionName = `${sponsorship}Legislation`;
-  let response;
-  try {
-    response = await axios.get(
-      `${CONGRESS_API_BASE_URL}/member/${encodeURIComponent(bioguideId)}/${sponsorship}-legislation`,
-      {
-        params: { api_key: congressApiKey, format: "json", limit: 50 },
+  const endpoint =
+    `${CONGRESS_API_BASE_URL}/member/${encodeURIComponent(bioguideId)}/` +
+    `${sponsorship}-legislation`;
+  const allRecords = [];
+
+  for (let page = 0; page < 5; page += 1) {
+    let response;
+    try {
+      response = await axios.get(endpoint, {
+        params: {
+          api_key: congressApiKey,
+          format: "json",
+          limit: 50,
+          offset: page * 50,
+        },
         timeout: CONGRESS_API_TIMEOUT_MS,
-      },
+      });
+    } catch (error) {
+      const responseStatus = error.response?.status;
+      throw new Error(
+        responseStatus
+          ? `Congress.gov ${sponsorship} legislation request failed (HTTP ${responseStatus})`
+          : `Congress.gov ${sponsorship} legislation request failed`,
+      );
+    }
+
+    const pageRecords = getMemberLegislationRecords(
+      response.data,
+      collectionName,
     );
-  } catch (error) {
-    const responseStatus = error.response?.status;
-    throw new Error(
-      responseStatus
-        ? `Congress.gov ${sponsorship} legislation request failed (HTTP ${responseStatus})`
-        : `Congress.gov ${sponsorship} legislation request failed`,
-    );
+    allRecords.push(...pageRecords);
+    if (pageRecords.length < 50) {
+      break;
+    }
   }
 
   return normalizeBillRecords(
-    response.data,
+    { [collectionName]: allRecords },
     collectionName,
     currentCongress,
     limit,
@@ -268,7 +279,7 @@ export async function getSponsoredBills(bioguideId, currentCongress) {
 }
 
 // Loads up to twenty recent cosponsored bills for a bioguide ID, using the
-// same current-Congress preference and introduced-date ordering as sponsorship.
+// same pagination and introduced-date ordering as sponsorship.
 export async function getCosponsoredBills(bioguideId, currentCongress) {
   return getMemberBills(bioguideId, currentCongress, "cosponsored", 20);
 }

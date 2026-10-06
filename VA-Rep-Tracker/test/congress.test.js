@@ -10,7 +10,7 @@ import {
   toBillRpcPayload,
 } from "../lib/congress.js";
 
-test("normalizes, current-Congress prioritizes, and date-sorts bills", () => {
+test("normalizes, drops other Congresses, and sorts bills by introduced date", () => {
   const normalized = normalizeBillRecords(
     {
       sponsoredLegislation: [
@@ -75,13 +75,6 @@ test("normalizes, current-Congress prioritizes, and date-sorts bills", () => {
       title: "Missing date",
       introducedDate: null,
     },
-    {
-      congress: 118,
-      type: "hr",
-      number: "12",
-      title: "Older Congress",
-      introducedDate: "2025-01-01",
-    },
   ]);
 });
 
@@ -103,7 +96,7 @@ test("sponsored bills keep their cap of ten", () => {
   assert.equal(normalized[9].number, "3");
 });
 
-test("normalizes co-sponsored titles from title or latestTitle and caps at twenty", () => {
+test("normalizes co-sponsored titles from title or latestTitle and drops other Congresses", () => {
   const normalized = normalizeBillRecords(
     {
       cosponsoredLegislation: [
@@ -121,13 +114,6 @@ test("normalizes co-sponsored titles from title or latestTitle and caps at twent
           title: "Current title",
           latestTitle: "Ignored fallback",
           introducedDate: "2025-01-01",
-        },
-        {
-          congress: 118,
-          type: "s",
-          number: 3,
-          latestTitle: "Older Congress",
-          introducedDate: "2025-03-01",
         },
       ],
     },
@@ -151,19 +137,12 @@ test("normalizes co-sponsored titles from title or latestTitle and caps at twent
       title: "Current title",
       introducedDate: "2025-01-01",
     },
-    {
-      congress: 118,
-      type: "s",
-      number: "3",
-      title: "Older Congress",
-      introducedDate: "2025-03-01",
-    },
   ]);
 });
 
-test("co-sponsored legislation is capped at twenty and prefers the current Congress", () => {
+test("co-sponsored legislation is capped at twenty after filtering Congress", () => {
   const normalized = normalizeBillRecords(
-    Array.from({ length: 25 }, (_, index) => ({
+    Array.from({ length: 26 }, (_, index) => ({
       congress: index === 0 ? 118 : 119,
       type: "hr",
       number: index + 1,
@@ -178,7 +157,8 @@ test("co-sponsored legislation is capped at twenty and prefers the current Congr
   );
 
   assert.equal(normalized.length, 20);
-  assert.equal(normalized[0].number, "25");
+  assert.equal(normalized[0].number, "26");
+  assert.equal(normalized.at(-1).number, "7");
   assert.equal(normalized.some((bill) => bill.congress === 118), false);
 });
 
@@ -269,6 +249,7 @@ test("loads co-sponsored bills from the Congress.gov endpoint with the requested
       "https://api.congress.gov/v3/member/W000804/cosponsored-legislation",
     );
     assert.equal(requestOptions.params.limit, 50);
+    assert.equal(requestOptions.params.offset, 0);
     assert.deepEqual(bills, [
       {
         congress: 119,
@@ -278,6 +259,84 @@ test("loads co-sponsored bills from the Congress.gov endpoint with the requested
         introducedDate: "2025-02-01",
       },
     ]);
+  } finally {
+    axios.get = originalGet;
+    if (originalApiKey === undefined) {
+      delete process.env.CONGRESS_API_KEY;
+    } else {
+      process.env.CONGRESS_API_KEY = originalApiKey;
+    }
+  }
+});
+
+test("paginates up to five pages before filtering and sorting current Congress bills", async () => {
+  const originalGet = axios.get;
+  const originalApiKey = process.env.CONGRESS_API_KEY;
+  const offsets = [];
+  axios.get = async (_url, options) => {
+    offsets.push(options.params.offset);
+    const page = options.params.offset / 50;
+    const count = page === 2 ? 17 : 50;
+    return {
+      data: {
+        sponsoredLegislation: Array.from({ length: count }, (_, index) => {
+          const number = page * 50 + index + 1;
+          return {
+            congress: number === 1 ? 118 : 119,
+            type: "hr",
+            number,
+            title: `Bill ${number}`,
+            introducedDate: new Date(Date.UTC(2025, 0, number))
+              .toISOString()
+              .slice(0, 10),
+          };
+        }),
+      },
+    };
+  };
+  process.env.CONGRESS_API_KEY = "test-api-key";
+
+  try {
+    const bills = await getSponsoredBills("W000804", 119);
+    assert.deepEqual(offsets, [0, 50, 100]);
+    assert.equal(bills.length, 10);
+    assert.equal(bills[0].number, "117");
+    assert.equal(bills.every((bill) => bill.congress === 119), true);
+  } finally {
+    axios.get = originalGet;
+    if (originalApiKey === undefined) {
+      delete process.env.CONGRESS_API_KEY;
+    } else {
+      process.env.CONGRESS_API_KEY = originalApiKey;
+    }
+  }
+});
+
+test("stops after five full pages when every page contains fifty records", async () => {
+  const originalGet = axios.get;
+  const originalApiKey = process.env.CONGRESS_API_KEY;
+  const offsets = [];
+  axios.get = async (_url, options) => {
+    offsets.push(options.params.offset);
+    const firstNumber = options.params.offset + 1;
+    return {
+      data: {
+        cosponsoredLegislation: Array.from({ length: 50 }, (_, index) => ({
+          congress: 119,
+          type: "hr",
+          number: firstNumber + index,
+          title: `Bill ${firstNumber + index}`,
+          introducedDate: "2025-01-01",
+        })),
+      },
+    };
+  };
+  process.env.CONGRESS_API_KEY = "test-api-key";
+
+  try {
+    const bills = await getCosponsoredBills("W000804", 119);
+    assert.deepEqual(offsets, [0, 50, 100, 150, 200]);
+    assert.equal(bills.length, 20);
   } finally {
     axios.get = originalGet;
     if (originalApiKey === undefined) {

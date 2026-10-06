@@ -53,7 +53,8 @@ export default function SearchPage() {
 
   // Navigate only when the current text exactly identifies a known county/city;
   // encode the county so spaces and punctuation survive in the shareable URL.
-  const handleSubmit = () => {
+  const handleSubmit = (event) => {
+    event.preventDefault();
     if (!isExactMatch || !selectedCounty) return;
     const district = ziptodist[selectedCounty];
     navigate(
@@ -69,7 +70,7 @@ export default function SearchPage() {
         alt="Hoo's Your Rep?"
       />
 
-      <section className="sp-search">
+      <form className="sp-search" onSubmit={handleSubmit}>
         <label htmlFor="county-input">Find out what your rep did for you!</label>
         <input
           id="county-input"
@@ -78,32 +79,36 @@ export default function SearchPage() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Enter your County/City…"
         />
-      </section>
 
-      {normalizedQuery && results.length === 0 && (
-        <p className="sp-no-results">No matches for "{query}"</p>
-      )}
+        {normalizedQuery && results.length === 0 && (
+          <p className="sp-no-results">No matches for "{query}"</p>
+        )}
 
-      {results.length > 0 && (
-        <ul className="sp-results">
-          {results.map((item, index) => (
-            <li
-              key={item.name}
-              style={{ "--stagger": index }}
-              onClick={() => handleSelect(item.name)}
-            >
-              <span className="sp-result-name">{item.name}</span>
-              <span className="sp-result-district">District {item.district}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+        {results.length > 0 && (
+          <ul className="sp-results">
+            {results.map((item, index) => (
+              <li key={item.name} style={{ "--stagger": index }}>
+                <button
+                  className="sp-result-option"
+                  type="button"
+                  onClick={() => handleSelect(item.name)}
+                >
+                  <span className="sp-result-name">{item.name}</span>
+                  <span className="sp-result-district">
+                    District {item.district}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
 
-      <div className="sp-submit">
-        <button onClick={handleSubmit} disabled={!isExactMatch}>
+        <div className="sp-submit">
+          <button type="submit" disabled={!isExactMatch}>
           View My Rep →
-        </button>
-      </div>
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

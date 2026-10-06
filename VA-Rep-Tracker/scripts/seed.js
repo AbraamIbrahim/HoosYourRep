@@ -1,4 +1,4 @@
-// One-time (re-runnable) seed: loads Virginia members and their URLs from urls.jsonc.
+// One-time (re-runnable) seed: loads Virginia members and source URLs from urls.jsonc.
 // Needs in .env.local: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 import { readFileSync } from "node:fs";
@@ -47,6 +47,7 @@ const memberRows = Object.entries(memberEntries).map(
     chamber: memberEntry.chamber,
     district: memberEntry.district,
     state: "VA",
+    issues_url: cleanUrl(memberEntry.issues),
     campaign_url: cleanUrl(memberEntry.campaign),
     ballotpedia_url: cleanUrl(memberEntry.ballotpedia),
   }),

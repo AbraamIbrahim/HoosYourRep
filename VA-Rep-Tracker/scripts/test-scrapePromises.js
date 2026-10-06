@@ -26,8 +26,8 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const ids = process.argv.slice(2);
 let query = supabase
   .from("members")
-  .select("bioguide_id, name, campaign_url, ballotpedia_url")
-  .or("campaign_url.not.is.null,ballotpedia_url.not.is.null");
+  .select("bioguide_id, name, issues_url, campaign_url, ballotpedia_url")
+  .or("issues_url.not.is.null,campaign_url.not.is.null,ballotpedia_url.not.is.null");
 if (ids.length) query = query.in("bioguide_id", ids);
 else query = query.limit(3);
 
@@ -41,9 +41,23 @@ if (!members.length) {
 for (const member of members) {
   console.log(`\n=== ${member.name} (${member.bioguide_id}) ===`);
   const t0 = Date.now();
-  const { promises, source, method, errors } = await scrapePromises(member);
+  const { promises, source, method, errors, tiers } = await scrapePromises(
+    member,
+    { minPromises: 3 },
+  );
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
   console.log(`source: ${source ?? "NONE"} via ${method ?? "-"} | ${promises.length} promises | ${secs}s`);
+  console.log(
+    "tiers:",
+    tiers.map(({ name, attempts }) => ({
+      name,
+      attempts: attempts.map(({ method: attemptMethod, status, found }) => ({
+        method: attemptMethod,
+        status,
+        found,
+      })),
+    })),
+  );
   if (errors.length) console.log("notes:", errors);
   console.log(JSON.stringify(promises, null, 2));
 }

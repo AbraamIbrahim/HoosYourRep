@@ -14,6 +14,7 @@ import {
   getSponsoredBills,
 } from "../lib/congress.js";
 import {
+  getMemberStartCutoffMs,
   getPositiveIntegerSetting,
   getPromiseReplacementThreshold,
   shouldReplacePromises,
@@ -22,11 +23,10 @@ import { scrapePromises } from "../lib/scrapePromises.js";
 import { getSupabaseAdmin } from "../lib/supabaseAdmin.js";
 import { withTimeout } from "../lib/withTimeout.js";
 
-const DEFAULT_TIME_BUDGET_MS = 50_000;
+const DEFAULT_TIME_BUDGET_MS = 270_000;
 const MAX_TIME_BUDGET_MS = 295_000;
-const DEFAULT_MEMBER_TIMEOUT_MS = 90_000;
+const DEFAULT_MEMBER_TIMEOUT_MS = 60_000;
 const MAX_MEMBER_TIMEOUT_MS = 280_000;
-const MEMBER_START_RESERVE_MS = 15_000;
 const MAX_REFRESH_CONCURRENCY = 4;
 const MAX_MEMBER_LIMIT = 13;
 
@@ -37,6 +37,8 @@ function isAuthorized(authorizationHeader, cronSecret) {
     return false;
   }
 
+  // Reject unequal lengths before timingSafeEqual, which requires equal-sized
+  // buffers and would otherwise throw for malformed authorization headers.
   const receivedValue = Buffer.from(authorizationHeader);
   const expectedValue = Buffer.from(`Bearer ${cronSecret}`);
   return (
@@ -50,9 +52,12 @@ function isAuthorized(authorizationHeader, cronSecret) {
 function getQueryParameter(request, parameterName) {
   const requestValue = request.query?.[parameterName];
   if (requestValue !== undefined) {
+    // Vercel may parse repeated query keys into arrays; use the first value
+    // consistently with URLSearchParams.get below.
     return Array.isArray(requestValue) ? requestValue[0] : requestValue;
   }
 
+  // Local invocations and test requests may provide only the raw URL.
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
   return requestUrl.searchParams.get(parameterName);
 }
@@ -68,6 +73,8 @@ function getErrorMessage(error) {
 // result keeps the existing promise list; operational errors are distinguished
 // from a source page that simply contains no promises.
 function getScrapeStatus(scrapeResult, promiseCount, replacementThreshold) {
+  // Enough promises are safe to replace the stored set; a smaller positive
+  // result is useful to report, but should not erase a fuller prior scrape.
   if (promiseCount >= replacementThreshold) {
     return {
       status: "ok",
@@ -82,6 +89,7 @@ function getScrapeStatus(scrapeResult, promiseCount, replacementThreshold) {
     };
   }
 
+  // An empty page is a valid result; transport/extraction errors are failures.
   const operationalErrors = (scrapeResult?.errors ?? []).filter(
     (errorMessage) => !errorMessage.includes(": no promises found at "),
   );
@@ -126,6 +134,8 @@ function mapSavedBills(savedBillRows) {
 // bill rows by relationship. These saved lists are retained independently if
 // the corresponding external fetch or database replacement fails.
 async function readExistingMemberData(supabase, bioguideId) {
+  // Fetch both persisted collections together so their previous versions can
+  // independently survive a failed scrape or failed replacement.
   const [promisesResult, billsResult] = await Promise.all([
     supabase
       .from("promises")
@@ -142,6 +152,8 @@ async function readExistingMemberData(supabase, bioguideId) {
     throw new Error("Could not load existing promises and legislation");
   }
 
+  // The Congress-scoped filter is applied by the caller once its current
+  // Congress value is known; this function preserves relationship grouping.
   const savedBills = mapSavedBills(billsResult.data ?? []);
   return {
     promises: mapSavedPromises(promisesResult.data ?? []),
@@ -169,6 +181,8 @@ async function writeScrapeStatus(
   };
 
   if (!dryRun) {
+    // Dry runs return the exact proposed status without touching the members
+    // table, keeping their only persistent side effect at zero.
     const { error } = await supabase
       .from("members")
       .update(memberStatusRow)
@@ -197,11 +211,15 @@ async function refreshMember(member, context) {
       replaced: false,
       method: null,
       source: null,
+      tiers: [],
+      notes: [],
+      errors: [],
     },
     bills: { status: "kept", count: 0 },
     cosponsoredBills: { status: "kept", count: 0 },
     analysis: { status: "skipped_no_data", score: null },
     error: null,
+    failed: false,
   };
   const memberErrors = [];
   const attemptedAt = new Date().toISOString();
@@ -210,18 +228,31 @@ async function refreshMember(member, context) {
   let existingBills = [];
   let existingCosponsoredBills = [];
   try {
+    // Load current saved data before external work so each failed collection
+    // can fall back to the matching saved collection.
     const existingData = await readExistingMemberData(
       context.supabase,
       member.bioguide_id,
     );
     existingPromises = existingData.promises;
-    existingBills = existingData.bills;
-    existingCosponsoredBills = existingData.cosponsoredBills;
+    // Analysis uses current-Congress identifiers only; older rows remain in
+    // storage but cannot be confused with this session's bills.
+    existingBills = context.congress === null
+      ? existingData.bills
+      : existingData.bills.filter((bill) => bill.congress === context.congress);
+    existingCosponsoredBills = context.congress === null
+      ? existingData.cosponsoredBills
+      : existingData.cosponsoredBills.filter(
+          (bill) => bill.congress === context.congress,
+        );
   } catch (error) {
+    // Without the saved baseline, this member cannot safely perform selective
+    // replacements, so record failure and skip its remaining external calls.
     const message = getErrorMessage(error);
     memberErrors.push(message);
     memberResult.scrape.status = "failed";
     memberResult.error = message;
+    memberResult.failed = true;
     let memberStatusRow;
     try {
       memberStatusRow = await writeScrapeStatus(
@@ -261,11 +292,22 @@ async function refreshMember(member, context) {
     return memberResult;
   }
 
-  let scrapeResult = { promises: [], source: null, method: null, errors: [] };
+  let scrapeResult = {
+    promises: [],
+    source: null,
+    method: null,
+    errors: [],
+    notes: [],
+    tiers: [],
+  };
   let scrapeException = null;
   try {
+    // The same configured threshold controls both multi-source scraping and
+    // the later decision to replace existing promises.
     scrapeResult = await withTimeout(
-      scrapePromises(member),
+      scrapePromises(member, {
+        minPromises: context.promiseReplacementThreshold,
+      }),
       context.memberTimeoutMs,
       `Scraping ${member.name}`,
     );
@@ -276,9 +318,14 @@ async function refreshMember(member, context) {
   }
 
   const scrapedPromises = scrapeResult.promises ?? [];
+  // Preserve each source's tier report in the response so dry runs explain
+  // where promises were found, even when the first tier met the threshold.
   memberResult.scrape.found = scrapedPromises.length;
   memberResult.scrape.method = scrapeResult.method ?? null;
   memberResult.scrape.source = scrapeResult.source ?? null;
+  memberResult.scrape.tiers = scrapeResult.tiers ?? [];
+  memberResult.scrape.notes = scrapeResult.notes ?? [];
+  memberResult.scrape.errors = scrapeResult.errors ?? [];
 
   let promiseReplacementData = existingPromises;
   let promiseWriteError = null;
@@ -290,6 +337,8 @@ async function refreshMember(member, context) {
     );
   if (shouldReplace) {
     if (context.dryRun) {
+      // Use scraped data in the proposed analysis, but do not call the write
+      // RPC; a real run follows the same data path after a successful RPC.
       promiseReplacementData = scrapedPromises;
       memberResult.scrape.replaced = true;
     } else {
@@ -316,6 +365,8 @@ async function refreshMember(member, context) {
         scrapedPromises.length,
         context.promiseReplacementThreshold,
       );
+  // A scrape exception may already have been recorded above; retain one
+  // canonical status error rather than duplicating it in the member summary.
   if (
     scrapeStatusResult.status === "failed" &&
     !memberErrors.includes(scrapeStatusResult.error)
@@ -338,92 +389,97 @@ async function refreshMember(member, context) {
     memberErrors.push(getErrorMessage(error));
   }
 
-  let billsForAnalysis = existingBills;
-  let billsToWrite = null;
-  if (!context.congressError) {
-    try {
-      const scrapedBills = (await getSponsoredBills(
-        member.bioguide_id,
-        context.congress,
-      )).map((bill) => ({ ...bill, relationship: "sponsor" }));
-      if (scrapedBills.length > 0) {
-        billsToWrite = scrapedBills;
-        if (context.dryRun) {
-          billsForAnalysis = scrapedBills;
-          memberResult.bills.status = "would_replace";
-        } else {
-          const { error } = await context.supabase.rpc(
-            "replace_bills",
-            buildReplaceBillsRpcArgs(
-              member.bioguide_id,
-              "sponsor",
-              scrapedBills,
-            ),
-          );
-          if (error) {
-            memberErrors.push("Could not replace saved sponsored bills");
-            memberResult.bills.status = "kept_write_failed";
-          } else {
-            billsForAnalysis = scrapedBills;
-            memberResult.bills.status = "replaced";
-          }
-        }
-      } else {
-        memberResult.bills.status = "kept_empty_response";
-      }
-    } catch (error) {
-      memberErrors.push(getErrorMessage(error));
-      memberResult.bills.status = "kept_fetch_failed";
-    }
-  } else {
-    memberErrors.push(context.congressError);
-    memberResult.bills.status = "kept_congress_unavailable";
-  }
-  memberResult.bills.count = billsForAnalysis.length;
+  // Start the independent Congress.gov requests together; one endpoint's
+  // failure must not prevent refreshing the other relationship.
+  const billFetchResults = context.congressError
+    ? [null, null]
+    : await Promise.allSettled([
+        getSponsoredBills(member.bioguide_id, context.congress),
+        getCosponsoredBills(member.bioguide_id, context.congress),
+      ]);
 
-  let cosponsoredBills = existingCosponsoredBills;
-  let cosponsoredBillsToWrite = null;
-  if (!context.congressError) {
-    try {
-      const scrapedCosponsoredBills = (await getCosponsoredBills(
-        member.bioguide_id,
-        context.congress,
-      )).map((bill) => ({ ...bill, relationship: "cosponsor" }));
-      if (scrapedCosponsoredBills.length > 0) {
-        cosponsoredBillsToWrite = scrapedCosponsoredBills;
-        if (context.dryRun) {
-          cosponsoredBills = scrapedCosponsoredBills;
-          memberResult.cosponsoredBills.status = "would_replace";
-        } else {
-          const { error } = await context.supabase.rpc(
-            "replace_bills",
-            buildReplaceBillsRpcArgs(
-              member.bioguide_id,
-              "cosponsor",
-              scrapedCosponsoredBills,
-            ),
-          );
-          if (error) {
-            memberErrors.push("Could not replace saved co-sponsored bills");
-            memberResult.cosponsoredBills.status = "kept_write_failed";
-          } else {
-            cosponsoredBills = scrapedCosponsoredBills;
-            memberResult.cosponsoredBills.status = "replaced";
-          }
-        }
-      } else {
-        memberResult.cosponsoredBills.status = "kept_empty_response";
-      }
-    } catch (error) {
-      memberErrors.push(getErrorMessage(error));
-      memberResult.cosponsoredBills.status = "kept_fetch_failed";
+  async function applyBillFetchResult(fetchResult, relationship, existing) {
+    const isCosponsor = relationship === "cosponsor";
+    const result = isCosponsor ? memberResult.cosponsoredBills : memberResult.bills;
+    if (context.congressError) {
+      result.status = "kept_congress_unavailable";
+      memberErrors.push(context.congressError);
+      return { bills: existing, toWrite: null };
     }
-  } else {
-    memberResult.cosponsoredBills.status = "kept_congress_unavailable";
+    if (fetchResult.status === "rejected") {
+      // Keep only this relationship's saved bills; the other list can still
+      // proceed through its own fetch and replacement.
+      memberErrors.push(getErrorMessage(fetchResult.reason));
+      result.status = "kept_fetch_failed";
+      return { bills: existing, toWrite: null };
+    }
+
+    const scrapedBills = fetchResult.value.map((bill) => ({
+      ...bill,
+      relationship,
+    }));
+    if (scrapedBills.length === 0) {
+      // Empty API results are not proof that saved legislation should be
+      // deleted, so retain the existing list.
+      result.status = "kept_empty_response";
+      return { bills: existing, toWrite: null };
+    }
+
+    if (context.dryRun) {
+      // Report the proposed replacement and feed it to analysis without
+      // mutating the database.
+      result.status = "would_replace";
+      return { bills: scrapedBills, toWrite: scrapedBills };
+    }
+
+    try {
+      const { error } = await context.supabase.rpc(
+        "replace_bills",
+        buildReplaceBillsRpcArgs(
+          member.bioguide_id,
+          relationship,
+          scrapedBills,
+        ),
+      );
+      if (error) {
+        throw new Error("RPC returned an error");
+      }
+    } catch {
+      // Treat thrown requests and Supabase's returned error shape equally:
+      // neither may turn a failed replacement into an empty successful list.
+      const errorMessage = isCosponsor
+        ? "Could not replace saved co-sponsored bills"
+        : "Could not replace saved sponsored bills";
+      memberErrors.push(errorMessage);
+      result.status = "kept_write_failed";
+      return { bills: existing, toWrite: scrapedBills };
+    }
+    result.status = "replaced";
+    return { bills: scrapedBills, toWrite: scrapedBills };
   }
+
+  const [sponsoredState, cosponsoredState] = await Promise.all([
+    applyBillFetchResult(
+      context.congressError ? null : billFetchResults[0],
+      "sponsor",
+      existingBills,
+    ),
+    applyBillFetchResult(
+      context.congressError ? null : billFetchResults[1],
+      "cosponsor",
+      existingCosponsoredBills,
+    ),
+  ]);
+  const billsForAnalysis = sponsoredState.bills;
+  const cosponsoredBills = cosponsoredState.bills;
+  const billsToWrite = sponsoredState.toWrite;
+  const cosponsoredBillsToWrite = cosponsoredState.toWrite;
+  memberResult.bills.count = billsForAnalysis.length;
   memberResult.cosponsoredBills.count = cosponsoredBills.length;
 
   let analysisToWrite = null;
+  // Analysis uses the saved-or-successfully-refreshed lists, not a proposed
+  // list whose database replacement failed.
   const allBillsForAnalysis = [...billsForAnalysis, ...cosponsoredBills];
   if (promiseReplacementData.length === 0 || allBillsForAnalysis.length === 0) {
     memberResult.analysis.status = "skipped_no_data";
@@ -442,7 +498,6 @@ async function refreshMember(member, context) {
           bioguide_id: member.bioguide_id,
           score: analysisToWrite.score,
           breakdown: analysisToWrite.breakdown,
-          thinking: analysisToWrite.thinking,
           analyzed_at: new Date().toISOString(),
         });
         if (error) {
@@ -459,7 +514,22 @@ async function refreshMember(member, context) {
     }
   }
 
+  const failedBillStatuses = new Set([
+    "kept_fetch_failed",
+    "kept_write_failed",
+    "kept_congress_unavailable",
+  ]);
+  // A member is fully failed only when scraping and both bill paths failed
+  // and no analysis was saved/proposed; partial successes remain nonfatal.
+  memberResult.failed =
+    memberResult.scrape.status === "failed" &&
+    failedBillStatuses.has(memberResult.bills.status) &&
+    failedBillStatuses.has(memberResult.cosponsoredBills.status) &&
+    !["saved", "would_write"].includes(memberResult.analysis.status);
+
   if (context.dryRun) {
+    // These are intent-only values; callers can inspect them without any
+    // promises, bills, analysis, or member status having been written.
     memberResult.would_write = {
       promises: shouldReplace ? scrapedPromises : null,
       bills: billsToWrite,
@@ -516,6 +586,8 @@ export default async function handler(request, response) {
   let promiseReplacementThreshold;
   let memberLimit;
   try {
+    // Validate environment and query values before constructing a Supabase
+    // client, so malformed requests fail without making database calls.
     timeBudgetMs = getPositiveIntegerSetting(
       process.env.REFRESH_TIME_BUDGET_MS,
       DEFAULT_TIME_BUDGET_MS,
@@ -528,6 +600,11 @@ export default async function handler(request, response) {
       "REFRESH_MEMBER_TIMEOUT_MS",
       MAX_MEMBER_TIMEOUT_MS,
     );
+    if (getMemberStartCutoffMs(timeBudgetMs, memberTimeoutMs) <= 0) {
+      throw new Error(
+        "REFRESH_TIME_BUDGET_MS must exceed REFRESH_MEMBER_TIMEOUT_MS by more than 45000 milliseconds",
+      );
+    }
     refreshConcurrency = getPositiveIntegerSetting(
       process.env.REFRESH_CONCURRENCY,
       2,
@@ -571,10 +648,12 @@ export default async function handler(request, response) {
   let memberQuery = supabase
     .from("members")
     .select(
-      "bioguide_id, name, party, chamber, district, campaign_url, ballotpedia_url, last_scraped_at",
+      "bioguide_id, name, party, chamber, district, issues_url, campaign_url, ballotpedia_url, last_scraped_at",
     )
     .order("last_scraped_at", { ascending: true, nullsFirst: true });
   if (memberParameter) {
+    // Explicit member runs are useful for diagnosis; scheduled runs take the
+    // stalest members first and use the same bounded maximum.
     memberQuery = memberQuery.eq("bioguide_id", memberParameter);
   }
   memberQuery = memberQuery.limit(memberLimit);
@@ -612,6 +691,14 @@ export default async function handler(request, response) {
     congressError = getErrorMessage(error);
     console.warn("[refresh] Current Congress unavailable");
   }
+  if (congressError) {
+    // Do not refresh legislation against an unknown Congress: cached bills
+    // may be stale and bill identifiers could then be ambiguous.
+    return response.status(500).json({
+      ok: false,
+      error: `Congress.gov unavailable and no cached Congress is available: ${congressError}`,
+    });
+  }
 
   const context = {
     supabase,
@@ -623,6 +710,10 @@ export default async function handler(request, response) {
   };
   const memberResults = new Array(members.length);
   let nextMemberIndex = 0;
+  const memberStartCutoffMs = getMemberStartCutoffMs(
+    timeBudgetMs,
+    memberTimeoutMs,
+  );
 
   // Claims and refreshes members one at a time for this worker. Stops starting
   // work when the configured reserve is reached and converts unexpected member
@@ -630,7 +721,9 @@ export default async function handler(request, response) {
   async function runMemberWorker() {
     while (nextMemberIndex < members.length) {
       const elapsedMs = Date.now() - startedAt;
-      if (timeBudgetMs - elapsedMs < MEMBER_START_RESERVE_MS) {
+      // Check immediately before claiming work so queued workers cannot begin
+      // another member after the reserved completion window starts.
+      if (elapsedMs > memberStartCutoffMs) {
         return;
       }
 
@@ -642,6 +735,8 @@ export default async function handler(request, response) {
           context,
         );
       } catch (error) {
+        // A worker-level exception should still produce a result and best-
+        // effort status write rather than hiding that member from the report.
         const member = members[memberIndex];
         const failureMessage = getErrorMessage(error);
         try {
@@ -668,11 +763,15 @@ export default async function handler(request, response) {
             replaced: false,
             method: null,
             source: null,
+            tiers: [],
+            notes: [],
+            errors: [],
           },
           bills: { status: "kept", count: 0 },
           cosponsoredBills: { status: "kept", count: 0 },
           analysis: { status: "failed", score: null },
           error: failureMessage,
+          failed: true,
         };
         console.log(
           `[refresh] ${member.bioguide_id} failed; ` +
@@ -694,8 +793,15 @@ export default async function handler(request, response) {
     name: member.name,
   }));
   const completedMemberResults = memberResults.filter(Boolean);
-  return response.status(200).json({
-    ok: completedMemberResults.every((memberResult) => !memberResult.error),
+  // Return an HTTP failure only when every member that actually started failed;
+  // partial failures and budget-skipped members remain visible in a 200 report.
+  const everyProcessedMemberFailed =
+    completedMemberResults.length > 0 &&
+    completedMemberResults.every((memberResult) => memberResult.failed);
+  const responseStatus = everyProcessedMemberFailed ? 500 : 200;
+  return response.status(responseStatus).json({
+    ok: responseStatus === 200 &&
+      completedMemberResults.every((memberResult) => !memberResult.error),
     dryRun,
     elapsedMs: Date.now() - startedAt,
     congress,

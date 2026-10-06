@@ -312,38 +312,6 @@ export default function ResultsPage({ district }) {
     };
   }, [diagramConnections]);
 
-  useEffect(() => {
-    const elements = document.querySelectorAll(
-      ".rep-detail .reveal-on-scroll",
-    );
-    if (!elements.length) return undefined;
-
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      elements.forEach((element) => element.classList.add("is-visible"));
-      return undefined;
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("is-visible");
-            observer.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.14, rootMargin: "0px 0px -8% 0px" },
-    );
-    elements.forEach((element, index) => {
-      element.style.setProperty(
-        "--reveal-delay",
-        `${Math.min(index * 30, 260)}ms`,
-      );
-      observer.observe(element);
-    });
-    return () => observer.disconnect();
-  }, [breakdown.length, promises.length, visibleBills.length]);
-
   // Toggle a card's expanded state by copying the Set, preserving React's
   // immutable state update semantics for independent bill cards.
   const toggleBill = (identifier) => {
@@ -410,7 +378,7 @@ export default function ResultsPage({ district }) {
         ← Back to Search
       </button>
 
-      <section className="rep-info reveal-on-scroll">
+      <section className="rep-info">
         <p className="rep-kicker">U.S. Representative</p>
         <h1 className="rep-name">{member.name}</h1>
         <div className="rep-meta">
@@ -493,7 +461,7 @@ export default function ResultsPage({ district }) {
       </section>
 
       {senators.length > 0 && (
-        <section className="senators-section reveal-on-scroll">
+        <section className="senators-section">
           <h2>Virginia&apos;s U.S. Senators</h2>
           <div className="senator-list">
             {senators.map((senator) => (
@@ -503,7 +471,7 @@ export default function ResultsPage({ district }) {
         </section>
       )}
 
-      <section className="graph-section reveal-on-scroll">
+      <section className="graph-section">
         <h2>Promises and Legislation</h2>
         <p className="graph-hint">
           Promise sources and bill titles come from saved Supabase records.
@@ -560,7 +528,7 @@ export default function ResultsPage({ district }) {
                   return (
                     <div
                         key={`${promise.position}-${promise.topic}`}
-                        className="graph-promise-card reveal-on-scroll"
+                        className="graph-promise-card"
                         ref={(element) => {
                           promiseRefs.current[index] = element;
                         }}
@@ -687,7 +655,7 @@ export default function ResultsPage({ district }) {
       </section>
 
       {breakdown.length > 0 && (
-        <section className="breakdown-section reveal-on-scroll">
+        <section className="breakdown-section">
           <h2>Detailed Breakdown</h2>
           <p className="graph-hint">
             Analysis is linked to promises by their saved position.
@@ -696,7 +664,7 @@ export default function ResultsPage({ district }) {
             {breakdown.map((entry) => (
               <div
                 key={entry.promisePosition}
-                className="breakdown-item reveal-on-scroll"
+                className="breakdown-item"
               >
                 <div className="breakdown-header">
                   <span

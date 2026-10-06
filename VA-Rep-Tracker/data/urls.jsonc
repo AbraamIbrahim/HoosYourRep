@@ -30,6 +30,7 @@
     "chamber": "house",
     "district": 3,
     "campaign": "https://www.bobbyscottforcongress.com/",
+    "issues": "https://www.bobbyscottforcongress.com/the-scott-record",
     "ballotpedia": "https://ballotpedia.org/Bobby_Scott_(Virginia)"
   },
 
@@ -40,6 +41,7 @@
     "chamber": "house",
     "district": 4,
     "campaign": "https://jennifermcclellan.com/",
+    "issues": "https://jennifermcclellan.com/issues/",
     "ballotpedia": "https://ballotpedia.org/Jennifer_McClellan"
   },
 
@@ -60,6 +62,7 @@
     "chamber": "house",
     "district": 6,
     "campaign": "https://bencline.com/",
+    "issues": "https://bencline.com/issues/",
     "ballotpedia": "https://ballotpedia.org/Ben_Cline"
   },
 
@@ -70,6 +73,7 @@
     "chamber": "house",
     "district": 7,
     "campaign": "https://vindmanforcongress.com/",
+    "issues": "https://vindmanforcongress.com/issues/",
     "ballotpedia": "https://ballotpedia.org/Eugene_Vindman"
   },
 
@@ -80,6 +84,7 @@
     "chamber": "house",
     "district": 8,
     "campaign": "https://www.friendsofdonbeyer.com/",
+    "issues": "https://www.friendsofdonbeyer.com/priorities",
     "ballotpedia": "https://ballotpedia.org/Don_Beyer"
   },
 
@@ -90,6 +95,7 @@
     "chamber": "house",
     "district": 9,
     "campaign": "https://www.morgangriffithforcongress.com/",
+    "issues": "https://www.morgangriffithforcongress.com/issues/",
     "ballotpedia": "https://ballotpedia.org/Morgan_Griffith"
   },
 
@@ -100,6 +106,7 @@
     "chamber": "house",
     "district": 10,
     "campaign": "https://www.suhasforvirginia.com/",
+    "issues": "https://www.suhasforvirginia.com/issues",
     "ballotpedia": "https://ballotpedia.org/Suhas_Subramanyam"
   },
 
@@ -110,6 +117,7 @@
     "chamber": "house",
     "district": 11,
     "campaign": "https://jameswalkinshaw.org/",
+    "issues": "https://jameswalkinshaw.org/priorities/",
     "ballotpedia": "https://ballotpedia.org/James_Walkinshaw"
   },
   
@@ -120,6 +128,7 @@
     "chamber": "senate",
     "district": null,
     "campaign": "https://markwarnerva.com",
+    "issues": "https://www.markwarnerva.com/plan/",
     "ballotpedia": "https://ballotpedia.org/Mark_Warner"
   },
   // Tim Kaine (VA, Democrat)
@@ -129,6 +138,7 @@
     "chamber": "senate",
     "district": null,
     "campaign": "https://timkaine.com",
+    "issues": "https://timkaine.com/issues/",
     "ballotpedia": "https://ballotpedia.org/Tim_Kaine"
   }
 }

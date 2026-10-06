@@ -52,7 +52,7 @@ export function useDistrictData(district) {
             ballotpedia_url,
             last_scraped_at,
             promises(position, topic, text, keywords, source_url, scraped_at),
-            bills(type, number, title, introduced_date, relationship),
+            bills(congress, type, number, title, introduced_date, relationship),
             analysis(score, breakdown, analyzed_at)
           `)
           .eq("state", "VA")
@@ -102,13 +102,14 @@ export function useDistrictData(district) {
         }
       } catch (loadError) {
         if (!cancelled) {
+          console.error(
+            "[useDistrictData] Could not load district data:",
+            loadError instanceof Error ? loadError.message : loadError,
+          );
           setResult({
             requestKey,
             data: null,
-            error:
-              loadError instanceof Error
-                ? loadError.message
-                : "Could not load district data",
+            error: "Could not load results. Please try again.",
           });
         }
       }

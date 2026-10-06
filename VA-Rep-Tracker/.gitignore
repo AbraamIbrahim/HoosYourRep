@@ -16,7 +16,6 @@ dist-ssr
 .vscode/**
 **/.agents/**
 !.vscode/extensions.json
-!.vscode/mcp.json
 .idea
 .DS_Store
 *.suo
@@ -26,3 +25,5 @@ dist-ssr
 *.sw?
 .env
 *.env
+!.env.example
+.vscode/mcp.json

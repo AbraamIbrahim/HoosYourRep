@@ -232,20 +232,34 @@ code {
 }
 
 .sp-results li {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   padding: 10px 14px;
   margin-bottom: 6px;
   background: #fff4e1;
   border: 1px solid #e4c8a6;
   border-radius: 8px;
-  cursor: pointer;
   opacity: 0;
   transform: translateY(8px);
   animation: ww-rise 300ms ease-out forwards;
   animation-delay: calc(var(--stagger, 0) * 25ms);
   transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.sp-result-option {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sp-result-option:focus-visible {
+  outline: 2px solid #8f5b33;
+  outline-offset: 3px;
 }
 
 .sp-results li:hover {
