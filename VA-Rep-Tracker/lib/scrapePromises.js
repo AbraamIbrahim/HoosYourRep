@@ -11,7 +11,7 @@ import process from "node:process";
 import { z } from "zod/v3";
 
 const MODEL = "google/gemini-2.5-flash";
-const MAX_PROMISES = 6; // matches the 6-per-member shape in reps.json
+const MAX_PROMISES = 10;
 
 const IssuesLinkSchema = z.object({
   issuesUrl: z
@@ -84,7 +84,7 @@ function fetchSchema(name, kind) {
 
 // Drops malformed entries, trims and normalizes their fields, enforces the
 // maximum count, and attaches the trusted page URL as each promise's source.
-function cleanPromises(list, sourceUrl) {
+export function cleanPromises(list, sourceUrl) {
   return (list ?? [])
     .filter((promiseEntry) => promiseEntry && typeof promiseEntry.topic === "string" && typeof promiseEntry.text === "string" && promiseEntry.topic.trim() && promiseEntry.text.trim())
     .slice(0, MAX_PROMISES)
