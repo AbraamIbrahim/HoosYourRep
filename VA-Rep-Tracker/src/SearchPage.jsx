@@ -1,20 +1,26 @@
-// Provides county lookup and navigates to the selected district's shareable URL.
+// County search page
+// Lets visitors find their Virginia House district by county or city, then
+// opens a URL that preserves both the district number and selected county.
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ziptodist from "../data/ziptodist.json";
 
-// Displays county matches and routes an exact selection to its representative.
+// Renders the search input, filtered county matches, and district navigation.
+// District availability is constrained to Virginia's current 1–11 range; the
+// selected county is passed as a query parameter so a refreshed link retains it.
 export default function SearchPage() {
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
 
   const normalizedQuery = query.trim().toLowerCase();
-  // Restrict county results to the state's eleven valid House districts.
+  // Build the valid district set once; it filters archive lookup data without
+  // needing to load a representative list just to enable county search.
   const availableDistricts = useMemo(
     () => new Set(Array.from({ length: 11 }, (_, index) => String(index + 1))),
     [],
   );
-  // Resolve a case-insensitive exact county name for submission.
+  // Resolve a case-insensitive exact county/city match separately from the
+  // partial matches shown in the suggestion list.
   const selectedCounty = useMemo(
     () =>
       Object.keys(ziptodist).find(
@@ -23,7 +29,8 @@ export default function SearchPage() {
     [normalizedQuery],
   );
 
-  // Build a short list of counties matching the current search text.
+  // Filter the static county-to-district map by the normalized text and valid
+  // district range, then cap suggestions to keep the list manageable.
   const results = useMemo(() => {
     if (!normalizedQuery) return [];
     return Object.keys(ziptodist)
@@ -40,10 +47,12 @@ export default function SearchPage() {
     selectedCounty !== undefined &&
     availableDistricts.has(String(ziptodist[selectedCounty]));
 
-  // Use the chosen full county name as the exact-match search value.
+  // Replace a partial query with the full suggested county/city name so it
+  // becomes eligible for the exact-match submit action.
   const handleSelect = (name) => setQuery(name);
 
-  // Navigate only after a valid county has resolved to a Virginia district.
+  // Navigate only when the current text exactly identifies a known county/city;
+  // encode the county so spaces and punctuation survive in the shareable URL.
   const handleSubmit = () => {
     if (!isExactMatch || !selectedCounty) return;
     const district = ziptodist[selectedCounty];

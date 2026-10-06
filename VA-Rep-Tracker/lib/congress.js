@@ -1,13 +1,19 @@
-// Fetches, normalizes, and prepares Congress.gov data for database updates.
+// Congress.gov integration
+// Fetches the current Congress and members' sponsored/cosponsored legislation,
+// normalizes inconsistent API fields, prioritizes current and recently
+// introduced bills, and builds payloads for the relationship-aware database RPC.
 import axios from "axios";
 import process from "node:process";
 
 const CONGRESS_API_BASE_URL = "https://api.congress.gov/v3";
-// convert 24 hours to MS before needed to update current congress sesison number
+// Cache the active Congress number for one day to avoid an API call on every
+// refresh while still allowing the value to roll forward promptly.
 const CURRENT_CONGRESS_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const CONGRESS_API_TIMEOUT_MS = 10_000;
 
-// Reads a Congress number from either the structured API field or its name.
+// Extracts a positive integer from either Congress.gov's numeric `number`
+// property or a display name such as "119th Congress"; returns null if neither
+// representation can be interpreted.
 function parseCongressNumber(congressRecord) {
   if (Number.isInteger(congressRecord?.number) && congressRecord.number > 0) {
     return congressRecord.number;
@@ -19,7 +25,8 @@ function parseCongressNumber(congressRecord) {
   return congressNameMatch ? Number(congressNameMatch[1]) : null;
 }
 
-// Accepts the supported cached representations and returns a valid Congress number.
+// Reads the cache formats historically stored in `meta.value` and returns a
+// usable positive integer, or null when the stored value is absent or invalid.
 function getCachedCongressNumber(metaValue) {
   const valueCandidate =
     typeof metaValue === "number" || typeof metaValue === "string"
@@ -31,7 +38,8 @@ function getCachedCongressNumber(metaValue) {
     : null;
 }
 
-// Extracts Congress records from the API's supported response shapes.
+// Normalizes the current-Congress response to an array whether the API returned
+// the records directly or nested them under its `congresses` property.
 function getCongressRecords(responseData) {
   if (Array.isArray(responseData)) {
     return responseData;
@@ -42,7 +50,8 @@ function getCongressRecords(responseData) {
   return [];
 }
 
-// Extracts legislation records from the named collection in an API response.
+// Normalizes member-legislation responses to a record array, accepting direct
+// arrays and the endpoint-specific collection property used by Congress.gov.
 function getMemberLegislationRecords(responseData, collectionName) {
   if (Array.isArray(responseData)) {
     return responseData;
@@ -53,7 +62,9 @@ function getMemberLegislationRecords(responseData, collectionName) {
   return [];
 }
 
-// Requests the active Congress number when the Supabase cache is unavailable.
+// Requests Congress.gov's current-Congress endpoint and parses its response.
+// Missing credentials, failed requests, and responses without a valid Congress
+// number are reported explicitly to the caller.
 async function fetchCurrentCongressFromApi() {
   const congressApiKey = process.env.CONGRESS_API_KEY;
   if (!congressApiKey) {
@@ -87,7 +98,9 @@ async function fetchCurrentCongressFromApi() {
   }
 }
 
-// Uses a fresh cached Congress number when possible and refreshes it otherwise.
+// Uses a recent Supabase cache entry when available; otherwise fetches the
+// current number from Congress.gov and refreshes the cache unless this is a
+// dry run. If the API fails, a previously cached number remains a fallback.
 export async function getCurrentCongress({ supabase, dryRun = false }) {
   let cachedCongressNumber = null;
   let cachedAtMs = null;
@@ -141,7 +154,8 @@ export async function getCurrentCongress({ supabase, dryRun = false }) {
   }
 }
 
-// Converts a valid introduced date into a sortable timestamp.
+// Converts an API date string to milliseconds for newest-first ordering.
+// Invalid or missing dates return null so the caller can place those bills last.
 function getIntroducedDateTimestamp(introducedDate) {
   if (typeof introducedDate !== "string") {
     return null;
@@ -151,7 +165,9 @@ function getIntroducedDateTimestamp(introducedDate) {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-// Filters malformed legislation, prioritizes current bills, sorts by date, and caps results.
+// Removes records missing required identifiers or titles, normalizes fields,
+// prioritizes current-Congress bills, sorts dated bills newest first (undated
+// records last), and applies the requested per-relationship cap.
 export function normalizeBillRecords(
   responseData,
   collectionName,
@@ -209,7 +225,9 @@ export function normalizeBillRecords(
     .slice(0, limit);
 }
 
-// Fetches one member's sponsored or cosponsored legislation from Congress.gov.
+// Calls the member endpoint for the requested relationship with a bounded
+// response size, then normalizes and caps its records. API failures are
+// converted to concise relationship-specific errors for the refresh report.
 async function getMemberBills(bioguideId, currentCongress, sponsorship, limit) {
   const congressApiKey = process.env.CONGRESS_API_KEY;
   if (!congressApiKey) {
@@ -243,17 +261,21 @@ async function getMemberBills(bioguideId, currentCongress, sponsorship, limit) {
   );
 }
 
-// Loads up to ten recent sponsored bills for one member.
+// Loads up to ten recent sponsored bills for a bioguide ID, preserving each
+// bill's introduction date for database storage and display ordering.
 export async function getSponsoredBills(bioguideId, currentCongress) {
   return getMemberBills(bioguideId, currentCongress, "sponsored", 10);
 }
 
-// Loads up to twenty recent cosponsored bills for one member.
+// Loads up to twenty recent cosponsored bills for a bioguide ID, using the
+// same current-Congress preference and introduced-date ordering as sponsorship.
 export async function getCosponsoredBills(bioguideId, currentCongress) {
   return getMemberBills(bioguideId, currentCongress, "cosponsored", 20);
 }
 
-// Converts normalized bill dates to the database column name expected by the RPC.
+// Converts normalized bill objects into the JSON record fields accepted by
+// replace_bills, mapping the JavaScript introducedDate property to
+// introduced_date and explicitly preserving missing dates as null.
 export function toBillRpcPayload(bills) {
   return bills.map((bill) => ({
     congress: bill.congress,
@@ -264,7 +286,8 @@ export function toBillRpcPayload(bills) {
   }));
 }
 
-// Builds the named arguments required by the relationship-aware replace_bills RPC.
+// Assembles the named RPC parameters for one member and one relationship so
+// sponsor and cosponsor refreshes can replace their lists independently.
 export function buildReplaceBillsRpcArgs(bioguideId, relationship, bills) {
   return {
     p_bioguide_id: bioguideId,

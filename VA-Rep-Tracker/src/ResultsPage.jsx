@@ -1,4 +1,8 @@
-// Renders a district representative's promises, legislation, analysis, and senators.
+// District results page
+// Presents a Virginia House member's profile, promises, sponsored and
+// cosponsored bills, analysis, and the state's senators. It connects analysis
+// to current promise positions, draws links only to visible bills, and treats
+// legacy analysis without a valid promise position as unavailable.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useDistrictData } from "./hooks/useDistrictData";
@@ -16,12 +20,14 @@ const PROMISE_COLORS = [
   "#00bcd4",
 ];
 
-// Produces the shared identifier used to connect analysis entries to bill rows.
+// Returns the canonical Congress bill key used by analysis and saved bill rows,
+// so identifiers compare consistently regardless of the API's type casing.
 function getBillIdentifier(bill) {
   return `${String(bill.type).toUpperCase()} ${bill.number}`;
 }
 
-// Allows only HTTP(S) URLs to be rendered as external links.
+// Accepts only absolute HTTP or HTTPS URLs before they are used in an anchor;
+// malformed values and other schemes are omitted from the rendered page.
 function getSafeHttpUrl(value) {
   if (typeof value !== "string" || !value.trim()) return null;
   try {
@@ -34,7 +40,8 @@ function getSafeHttpUrl(value) {
   }
 }
 
-// Formats valid database timestamps for display and suppresses invalid dates.
+// Formats a database timestamp using the visitor's locale, returning null for
+// missing or invalid values so the UI can omit a misleading date.
 function formatDate(value) {
   if (typeof value !== "string") return null;
   const date = new Date(value);
@@ -47,7 +54,8 @@ function formatDate(value) {
       });
 }
 
-// Renders an external source link only when its URL passes the safety check.
+// Creates a new-tab source link after validating its scheme. Returns no link
+// when the database does not contain a usable source URL.
 function SourceLink({ url, children }) {
   const safeUrl = getSafeHttpUrl(url);
   if (!safeUrl) return null;
@@ -59,7 +67,8 @@ function SourceLink({ url, children }) {
   );
 }
 
-// Shows a bill's identifier, relationship, matching promises, and full title.
+// Renders one bill card with its sponsor/cosponsor label, related-promise
+// badges, and an expandable full title. Keyboard activation mirrors clicking.
 function BillCard({
   bill,
   indices,
@@ -120,7 +129,8 @@ function BillCard({
   );
 }
 
-// Displays a senator with a placeholder portrait and campaign link.
+// Displays a senator as a compact statewide card, using a placeholder portrait
+// and linking to the campaign website when one has been saved.
 function SenatorCard({ senator }) {
   return (
     <article className="senator-card">
@@ -139,7 +149,9 @@ function SenatorCard({ senator }) {
   );
 }
 
-// Loads and presents all data for a district, including linked bill matches.
+// Coordinates the district query, client-side relationship filtering, and
+// results UI. It handles loading, errors, and missing members before rendering
+// profile data, optional senators, sourced promises, bill matches, and analysis.
 export default function ResultsPage({ district }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -158,7 +170,9 @@ export default function ResultsPage({ district }) {
   const bills = useMemo(() => data?.bills ?? [], [data?.bills]);
   const senators = useMemo(() => data?.senators ?? [], [data?.senators]);
   const analysis = data?.analysis;
-  // Ignore legacy analysis rows without a valid promise position.
+  // Keep only analysis entries that point to a promise in the current result.
+  // Older rows lacking promisePosition cannot be reliably attached, so they are
+  // excluded from the score breakdown and promise-to-bill connections.
   const breakdown = useMemo(() => {
     if (!Array.isArray(analysis?.breakdown)) return [];
     return analysis.breakdown.filter(
@@ -191,7 +205,9 @@ export default function ResultsPage({ district }) {
     ],
     [cosponsoredBills, showCosponsored, sponsoredBills],
   );
-  // Map displayed bill identifiers to rendered positions for connection drawing.
+  // Record each visible bill's rendered index by canonical identifier. The map
+  // is recalculated when the cosponsored section opens or closes, ensuring SVG
+  // connections are drawn only to cards currently present in the DOM.
   const visibleBillIndices = useMemo(() => {
     const index = new Map();
     visibleBills.forEach((bill, billIndex) => {
@@ -202,7 +218,8 @@ export default function ResultsPage({ district }) {
     });
     return index;
   }, [visibleBills]);
-  // Collect the promise positions associated with each analyzed bill identifier.
+  // Build the reverse lookup used by bill badges and hover highlighting:
+  // bill identifier -> the positions of promises linked by the analysis.
   const billToPromiseIndices = useMemo(() => {
     const result = new Map();
     breakdown.forEach((entry) => {
@@ -218,7 +235,9 @@ export default function ResultsPage({ district }) {
     () => new Map(bills.map((bill) => [getBillIdentifier(bill), bill])),
     [bills],
   );
-  // Build only connections to bills currently visible in the list.
+  // Convert valid breakdown links into promise/bill element indexes. Since the
+  // lookup contains only visible bills, collapsed cosponsored bills get no
+  // rendered connection lines.
   const diagramConnections = useMemo(() => {
     const connections = [];
     breakdown.forEach((entry, breakdownIndex) => {
@@ -253,8 +272,9 @@ export default function ResultsPage({ district }) {
     const container = containerRef.current;
     if (!container || diagramConnections.length === 0) return undefined;
 
-    // Re-measure line endpoints as visible promises and bills change size.
-    function measureConnections() {
+      // Measures current promise and bill element bounds relative to the graph
+      // container so each SVG curve ends at the matching visible cards.
+      function measureConnections() {
       const currentContainer = containerRef.current;
       if (!currentContainer) return;
       const containerRect = currentContainer.getBoundingClientRect();
@@ -324,7 +344,8 @@ export default function ResultsPage({ district }) {
     return () => observer.disconnect();
   }, [breakdown.length, promises.length, visibleBills.length]);
 
-  // Keep expanded bill cards independent while avoiding state mutation.
+  // Toggle a card's expanded state by copying the Set, preserving React's
+  // immutable state update semantics for independent bill cards.
   const toggleBill = (identifier) => {
     setExpandedBills((previous) => {
       const next = new Set(previous);

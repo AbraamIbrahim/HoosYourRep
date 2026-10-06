@@ -1,4 +1,7 @@
-// Builds and validates the model request used to link campaign promises to bills.
+// Promise-to-legislation analysis
+// Formats the Gemini request, validates its response against the supplied
+// promises and both bill relationships, and returns canonical promise positions
+// and bill identifiers that the database-backed UI can safely consume.
 import axios from "axios";
 import process from "node:process";
 
@@ -6,7 +9,8 @@ const GEMINI_API_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 const GEMINI_REQUEST_TIMEOUT_MS = 20_000;
 
-// Separates model reasoning text from normal response text.
+// Keeps Gemini's optional thinking text separate from its user-facing JSON
+// answer by selecting response parts with the requested thought flag.
 function getTextParts(parts, isThinking) {
   return parts
     .filter(
@@ -17,7 +21,8 @@ function getTextParts(parts, isThinking) {
     .map((part) => part.text);
 }
 
-// Parses model JSON while accepting responses wrapped in Markdown fences.
+// Removes optional Markdown code fences and parses the remaining response as
+// JSON, reporting a stable error when the model returns malformed content.
 function parseJsonResponse(responseText) {
   const normalizedText = responseText
     .replace(/^```(?:json)?\s*/i, "")
@@ -31,12 +36,16 @@ function parseJsonResponse(responseText) {
   }
 }
 
-// Formats a bill identifier consistently with Congress.gov legislation records.
+// Produces the exact uppercase "TYPE NUMBER" key used in prompts and in the
+// allowlist that prevents the model from inventing bill references.
 function getBillIdentifier(bill) {
   return `${bill.type.toUpperCase()} ${bill.number}`;
 }
 
-// Creates instructions that give the model numbered promises and labeled bills.
+// Builds the full analysis prompt from the representative, ordered promises,
+// and relationship-tagged bill titles. Instructions require stable promise
+// numbering, constrain cited identifiers, and temper claims about cosponsorship
+// and whether a bill became law.
 export function createAnalysisPrompt(member, promises, bills) {
   const memberDescription =
     member.chamber === "senate"
@@ -87,7 +96,9 @@ Treat sponsorship as stronger evidence of commitment than cosponsorship. A bill 
 `;
 }
 
-// Validates model promise references and replaces echoed promise text with DB data.
+// Validates score and breakdown structure, enforces unique in-range promise
+// numbers, replaces model-echoed text with canonical database promise data, and
+// drops bill identifiers outside the sponsored/cosponsored input union.
 export function validateAndNormalizeAnalysis(parsedAnalysis, promises, bills) {
   const numericScore = Number(parsedAnalysis?.score);
   if (!Number.isFinite(numericScore)) {
@@ -137,7 +148,10 @@ export function validateAndNormalizeAnalysis(parsedAnalysis, promises, bills) {
   };
 }
 
-// Calls Gemini, parses its response, and returns normalized analysis.
+// Sends the generated prompt to Gemini, separates reasoning from answer text,
+// parses the JSON, and returns the validated score and breakdown. Missing
+// credentials, transport failures, and malformed model output are surfaced as
+// errors for the refresh handler to report.
 export async function analyzePromises(member, promises, bills) {
   const geminiApiKey = process.env.GEMINI_API_KEY;
   if (!geminiApiKey) {

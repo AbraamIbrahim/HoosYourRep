@@ -1,4 +1,8 @@
-// Authenticated Vercel endpoint for refreshing saved member, promise, bill, and analysis data.
+// Member data refresh endpoint
+// Authenticates the scheduled/manual request, selects members within configured
+// time and concurrency budgets, scrapes promises, refreshes sponsored and
+// cosponsored bill lists independently, and regenerates promise analysis.
+// Dry-run mode reports intended writes without mutating Supabase.
 import { Buffer } from "node:buffer";
 import { timingSafeEqual } from "node:crypto";
 import process from "node:process";
@@ -26,7 +30,8 @@ const MEMBER_START_RESERVE_MS = 15_000;
 const MAX_REFRESH_CONCURRENCY = 4;
 const MAX_MEMBER_LIMIT = 13;
 
-// Compares authorization credentials without leaking secret values in timing.
+// Validates the authorization header against the configured cron secret using
+// a constant-time comparison after checking equal byte lengths.
 function isAuthorized(authorizationHeader, cronSecret) {
   if (typeof authorizationHeader !== "string" || !cronSecret) {
     return false;
@@ -40,7 +45,8 @@ function isAuthorized(authorizationHeader, cronSecret) {
   );
 }
 
-// Reads a query value from Vercel's parsed request or the raw URL.
+// Reads a query parameter from Vercel's parsed request when available, falling
+// back to parsing the request URL for local or alternate handler environments.
 function getQueryParameter(request, parameterName) {
   const requestValue = request.query?.[parameterName];
   if (requestValue !== undefined) {
@@ -51,13 +57,16 @@ function getQueryParameter(request, parameterName) {
   return requestUrl.searchParams.get(parameterName);
 }
 
-// Produces a bounded error string suitable for API responses and refresh reports.
+// Converts unknown thrown values to a concise string and caps its length so
+// individual failures cannot overwhelm logs or the response payload.
 function getErrorMessage(error) {
   const message = error instanceof Error ? error.message : "Unknown error";
   return message.slice(0, 500);
 }
 
-// Classifies scrape results so incomplete or empty scrapes do not replace saved data.
+// Classifies a scrape as successful, thin, empty, or failed. A thin/empty
+// result keeps the existing promise list; operational errors are distinguished
+// from a source page that simply contains no promises.
 function getScrapeStatus(scrapeResult, promiseCount, replacementThreshold) {
   if (promiseCount >= replacementThreshold) {
     return {
@@ -89,7 +98,8 @@ function getScrapeStatus(scrapeResult, promiseCount, replacementThreshold) {
   };
 }
 
-// Converts saved promise rows to the shape used by the scraper and analyzer.
+// Converts Supabase promise rows to the application shape needed by analysis,
+// retaining keywords and the source URL while normalizing absent keywords.
 function mapSavedPromises(savedPromiseRows) {
   return savedPromiseRows.map((promiseRow) => ({
     topic: promiseRow.topic,
@@ -99,7 +109,8 @@ function mapSavedPromises(savedPromiseRows) {
   }));
 }
 
-// Converts saved bill rows to the shape consumed by analysis.
+// Converts Supabase bill columns into normalized analyzer fields, including
+// introduced date and relationship so prompts can label each kind of evidence.
 function mapSavedBills(savedBillRows) {
   return savedBillRows.map((billRow) => ({
     congress: billRow.congress,
@@ -111,7 +122,9 @@ function mapSavedBills(savedBillRows) {
   }));
 }
 
-// Loads saved promises and both bill relationships for one member.
+// Reads the member's existing promises and the unified bills table, then splits
+// bill rows by relationship. These saved lists are retained independently if
+// the corresponding external fetch or database replacement fails.
 async function readExistingMemberData(supabase, bioguideId) {
   const [promisesResult, billsResult] = await Promise.all([
     supabase
@@ -139,7 +152,8 @@ async function readExistingMemberData(supabase, bioguideId) {
   };
 }
 
-// Records the scrape attempt unless the request is a non-writing dry run.
+// Updates the member's last-scrape status in persistent runs and returns the
+// same row in all modes so dry-run output describes the write that would occur.
 async function writeScrapeStatus(
   supabase,
   member,
@@ -167,7 +181,11 @@ async function writeScrapeStatus(
   return memberStatusRow;
 }
 
-// Refreshes one member while preserving each saved list when its own update fails.
+// Refreshes all data for one member. Promise replacement follows the minimum
+// count policy; sponsor and cosponsor bills are fetched, written, and counted
+// separately; analysis receives whichever saved-or-new lists are available.
+// Every failed list update leaves that relationship's previous records intact,
+// and dry-run mode returns proposed writes without saving them.
 async function refreshMember(member, context) {
   const memberStartedAt = Date.now();
   const memberResult = {
@@ -472,7 +490,10 @@ async function refreshMember(member, context) {
   return memberResult;
 }
 
-// Validates the request, processes eligible members, and reports refresh outcomes.
+// Handles authorization and method checks, validates refresh settings, loads
+// the target roster, determines the active Congress, and runs member workers
+// within the time budget. Returns per-member outcomes, relationship-specific
+// totals, and any members skipped because the budget was exhausted.
 export default async function handler(request, response) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
@@ -603,7 +624,9 @@ export default async function handler(request, response) {
   const memberResults = new Array(members.length);
   let nextMemberIndex = 0;
 
-  // Processes queued members until the time budget no longer permits another start.
+  // Claims and refreshes members one at a time for this worker. Stops starting
+  // work when the configured reserve is reached and converts unexpected member
+  // failures into explicit results while attempting to record scrape status.
   async function runMemberWorker() {
     while (nextMemberIndex < members.length) {
       const elapsedMs = Date.now() - startedAt;

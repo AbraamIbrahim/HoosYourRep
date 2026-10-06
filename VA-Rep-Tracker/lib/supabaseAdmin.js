@@ -1,10 +1,14 @@
-// Creates and caches the privileged Supabase client for server-side jobs only.
+// Server-side Supabase admin client
+// Keeps the service-role credential inside server-only modules and lazily
+// reuses a single client instance for refresh requests in this process.
 import { createClient } from "@supabase/supabase-js";
 import process from "node:process";
 
 let supabaseAdminClient;
 
-// Returns the server client, failing clearly when its private credentials are absent.
+// Returns the cached privileged client, creating it from server environment
+// variables on first use. Throws a clear configuration error if either value
+// is missing; this module must not be imported by browser code.
 export function getSupabaseAdmin() {
   if (supabaseAdminClient) {
     return supabaseAdminClient;

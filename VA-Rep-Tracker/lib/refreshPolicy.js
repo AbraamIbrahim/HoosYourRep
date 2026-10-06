@@ -1,7 +1,11 @@
-// Parses refresh configuration and decides when scraped promises are safe to save.
+// Refresh policy helpers
+// Centralizes parsing and validation for refresh limits and defines the minimum
+// scrape size required before replacing existing promises with new results.
 export const MIN_PROMISES_TO_REPLACE = 3;
 
-// Reads the minimum promise count, using the default when unset.
+// Converts MIN_PROMISES_TO_REPLACE to a positive integer. Blank or absent
+// configuration uses the shared default; invalid values fail configuration
+// early instead of silently changing replacement behavior.
 export function getPromiseReplacementThreshold(environmentValue) {
   if (environmentValue === undefined || environmentValue.trim() === "") {
     return MIN_PROMISES_TO_REPLACE;
@@ -15,7 +19,8 @@ export function getPromiseReplacementThreshold(environmentValue) {
   return parsedValue;
 }
 
-// Determines whether the current scrape meets the configured replacement threshold.
+// Returns whether a scrape count is a valid integer that reaches the threshold;
+// callers use false to preserve the previously saved promises.
 export function shouldReplacePromises(
   promiseCount,
   threshold = MIN_PROMISES_TO_REPLACE,
@@ -23,7 +28,9 @@ export function shouldReplacePromises(
   return Number.isInteger(promiseCount) && promiseCount >= threshold;
 }
 
-// Parses a positive integer setting and enforces its allowed upper bound.
+// Parses a refresh setting such as a timeout, concurrency, or limit. Uses the
+// supplied fallback only when configuration is absent and rejects values
+// outside the positive-integer range or its configured maximum.
 export function getPositiveIntegerSetting(
   environmentValue,
   fallbackValue,
